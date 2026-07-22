@@ -1,4 +1,4 @@
-import * as userRepo from "../repositories/user.repository";
+import * as userRepo from "../repositories/user.repositories";
 import { hashPassword, comparePassword, validatePasswordStrength } from "../utils/password.util";
 import { generateTokenPair, verifyRefreshToken } from "../utils/jwt.util";
 import { generateSecureToken, expiresInMinutes, isTokenExpired } from "../utils/token.util";
