@@ -1,0 +1,74 @@
+// Prisma schema — this is the single source of truth for your database
+// structure. Run `npm run prisma:migrate` after editing this file to create
+// a migration and apply it to your local database.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  // Runtime queries go through Supabase's connection pooler (Supavisor).
+  url       = env("DATABASE_URL")
+  // Prisma CLI (migrate, studio, db pull) needs the non-pooled connection —
+  // migrations run DDL statements that pgbouncer's transaction mode can't
+  // handle reliably. See the README's Supabase section.
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  reels      Reel[]
+  categories Category[]
+}
+
+model Category {
+  id        String   @id @default(uuid())
+  name      String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reels     Reel[]
+  createdAt DateTime @default(now())
+
+  @@unique([userId, name])
+  @@index([userId])
+}
+
+enum ReelStatus {
+  PENDING
+  EXTRACTING
+  SUMMARIZING
+  DONE
+  FAILED
+}
+
+model Reel {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  sourceUrl    String
+  authorHandle String?
+  caption      String?
+  thumbnailUrl String?
+  transcript   String?
+
+  summary   String?
+  keyPoints String[] @default([])
+
+  status       ReelStatus @default(PENDING)
+  errorMessage String?
+
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id])
+
+  createdAt   DateTime  @default(now())
+  processedAt DateTime?
+
+  @@index([userId, status])
+  @@index([userId, categoryId])
+}
