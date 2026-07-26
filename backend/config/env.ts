@@ -40,4 +40,17 @@ export const ENV = {
 
   // CORS
   ALLOWED_ORIGINS: getEnv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:4000").split(","),
+
+  // Redis / BullMQ
+  REDIS_URL: getEnv("REDIS_URL", "redis://127.0.0.1:6379"),
+
+  // Instagram oEmbed (Meta Graph API)
+  FACEBOOK_APP_ACCESS_TOKEN: getEnv("FACEBOOK_APP_ACCESS_TOKEN"),
+
+  // Anthropic
+  ANTHROPIC_API_KEY: getEnv("ANTHROPIC_API_KEY"),
+  ANTHROPIC_MODEL: getEnv("ANTHROPIC_MODEL", "claude-sonnet-5"),
+
+  // Optional future video transcription (off by default — ToS risk)
+  ENABLE_VIDEO_TRANSCRIPTION: getEnv("ENABLE_VIDEO_TRANSCRIPTION", "false") === "true",
 } as const;
