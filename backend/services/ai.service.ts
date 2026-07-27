@@ -69,7 +69,13 @@ export async function summarizeReelCaption(
 
   const text = caption?.trim();
   if (!text) {
-    throw new Error("Cannot summarize reel: caption is empty after extraction.");
+    return {
+      summary: authorHandle
+        ? `No caption was provided for this reel by ${authorHandle}.`
+        : "No caption was provided for this reel.",
+      keyPoints: ["No caption was available for this reel."],
+      category: "Other",
+    };
   }
 
   const message = await anthropic.messages.create({

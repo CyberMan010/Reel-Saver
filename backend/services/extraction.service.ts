@@ -1,69 +1,63 @@
-import { ENV } from "../config/env";
+const OEMBED_ENDPOINT = "https://graph.facebook.com/v25.0/instagram_oembed";
 
-const OEMBED_URL = "https://graph.facebook.com/v18.0/instagram_oembed";
+export class ExtractionError extends Error {}
 
-export interface ExtractedReelContent {
+export interface ExtractedMetadata {
   authorHandle: string | null;
   caption: string | null;
   thumbnailUrl: string | null;
-  transcript: string | null;
 }
 
-interface OEmbedResponse {
-  author_name?: string;
-  title?: string;
-  thumbnail_url?: string;
+export function isInstagramReelUrl(url: string): boolean {
+  return /instagram\.com\/(reel|reels|p)\//.test(url);
 }
 
-/**
- * Optional future path — gated behind ENABLE_VIDEO_TRANSCRIPTION.
- * Not used in the default caption-only pipeline.
- */
-export async function transcribeReelVideo(_sourceUrl: string): Promise<string | null> {
-  if (!ENV.ENABLE_VIDEO_TRANSCRIPTION) {
-    return null;
-  }
-
-  throw new Error(
-    "Video transcription is not implemented. Enable only after accepting Instagram ToS risk."
-  );
+function normalizeInstagramUrl(url: string): string {
+  return url.replace(/instagram\.com\/reels\//, "instagram.com/reel/");
 }
 
-export async function extractReelContent(sourceUrl: string): Promise<ExtractedReelContent> {
-  const accessToken = ENV.FACEBOOK_APP_ACCESS_TOKEN;
-  if (!accessToken) {
-    throw new Error("FACEBOOK_APP_ACCESS_TOKEN is not configured.");
-  }
+function stripTags(html: string): string {
+  return decodeHtmlEntities(html.replace(/<[^>]*>/g, "").trim());
+}
 
-  const url = new URL(OEMBED_URL);
-  url.searchParams.set("url", sourceUrl);
-  url.searchParams.set("access_token", accessToken);
+function decodeHtmlEntities(text: string): string {
+  return text
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
 
-  const response = await fetch(url.toString());
+export async function extractReelContent(sourceUrl: string): Promise<ExtractedMetadata> {
+  const normalizedUrl = normalizeInstagramUrl(sourceUrl);
+  const params = new URLSearchParams({ url: normalizedUrl });
+  const response = await fetch(`${OEMBED_ENDPOINT}?${params.toString()}`);
+
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`Instagram oEmbed failed (${response.status}): ${body}`);
+    throw new ExtractionError(
+      `Instagram oEmbed request failed (${response.status}). The reel may be private, age-restricted, embed-disabled, or the URL malformed. ${body}`
+    );
   }
 
-  const payload = (await response.json()) as OEmbedResponse;
-  const transcript = await transcribeReelVideo(sourceUrl);
+  const data = await response.json();
+  const html: string = data.html ?? "";
 
-  return {
-    authorHandle: payload.author_name ?? null,
-    caption: payload.title ?? null,
-    thumbnailUrl: payload.thumbnail_url ?? null,
-    transcript,
-  };
-}
+  // Capture each <p>...</p> block WHOLE, including any nested tags (the
+  // caption text lives inside a nested <a> in real Instagram markup) —
+  // then strip tags afterward to get plain text. [\s\S]*? matches across
+  // newlines, unlike a plain `.`
+  const paragraphs = [...html.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/g)]
+    .map((m) => stripTags(m[1]))
+    .filter(Boolean);
 
-export function isInstagramReelUrl(sourceUrl: string): boolean {
-  try {
-    const parsed = new URL(sourceUrl);
-    const host = parsed.hostname.replace(/^www\./, "");
-    if (host !== "instagram.com") return false;
+  // The "A post shared by ... (@handle)" line is always one of the <p>
+  // blocks — identify it by that fixed phrase, and treat any *other*
+  // non-empty paragraph as the caption.
+  const authorParagraph = paragraphs.find((p) => /^A post shared by/i.test(p));
+  const authorHandle = authorParagraph?.match(/\(@([\w.]+)\)/)?.[1] ?? null;
+  const caption = paragraphs.find((p) => p !== authorParagraph) ?? null;
 
-    return /^\/(reel|reels|p|tv)\/[^/]+/.test(parsed.pathname);
-  } catch {
-    return false;
-  }
+  return { authorHandle, caption, thumbnailUrl: null };
 }
