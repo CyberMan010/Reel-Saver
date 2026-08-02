@@ -98,3 +98,24 @@ export async function processReel(reelId: string): Promise<void> {
     throw err;
   }
 }
+
+export async function updateReelCategory(
+  userId: string,
+  reelId: string,
+  categoryName: string
+): Promise<ReelWithCategory> {
+  // Ownership check first — never let a user reassign a reel that isn't theirs,
+  // same pattern as getReelForUser
+  const reel = await reelRepo.findReelById(reelId, userId);
+  if (!reel) {
+    throw Object.assign(new Error("Reel not found."), { statusCode: 404 });
+  }
+
+  // Reuses the exact same findOrCreateCategory the AI pipeline uses — so a
+  // human picking "Fitness & training" and the AI picking it land on the
+  // identical category row, not two different ones with the same name.
+  const category = await categoryRepo.findOrCreateCategory(userId, categoryName.trim());
+  const updated = await reelRepo.updateReelCategory(reelId, category.id);
+
+  return { ...updated, category: { id: category.id, name: category.name } };
+}

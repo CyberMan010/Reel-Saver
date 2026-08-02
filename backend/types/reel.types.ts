@@ -26,6 +26,7 @@ export interface Category {
 
 export interface CreateReelBody {
   sourceUrl: string;
+   transcript?: string;
 }
 
 export interface ListReelsQuery {

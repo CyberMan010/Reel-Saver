@@ -3,6 +3,7 @@ import * as reelsService from "../services/reels.service";
 import { sendSuccess } from "../utils/response.util";
 import type { CreateReelBody, ListReelsQuery, ReelStatus } from "../types/reel.types";
 
+
 export async function createReel(
   req: Request<object, object, CreateReelBody>,
   res: Response,
@@ -41,6 +42,19 @@ export async function getReel(
   try {
     const reel = await reelsService.getReelForUser(req.user!.userId, req.params.id);
     sendSuccess(res, "Reel retrieved successfully.", { reel });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function updateCategory(
+  req: Request<{ id: string }, object, { categoryName: string }>,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const reel = await reelsService.updateReelCategory(req.user!.userId, req.params.id, req.body.categoryName);
+    sendSuccess(res, "Category updated.", { reel });
   } catch (err) {
     next(err);
   }
