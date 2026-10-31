@@ -162,7 +162,7 @@ class _AddReelSheetState extends State<AddReelSheet> {
               label: Text(
                 _pickedMediaFile == null
                     ? 'Pick MP4 Video or MP3 Audio (FFmpeg → MP3)'
-                    : 'Selected: ${_pickedMediaFile!.path.split('/').last}',
+                    : 'Selected: ${_pickedMediaFile!.path.split(RegExp(r'[/\\]')).last}',
               ),
             ),
             const SizedBox(height: 12),

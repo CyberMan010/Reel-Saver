@@ -1,5 +1,14 @@
+import dns from "dns";
 import dotenv from "dotenv";
 import path from "path";
+
+// Prefer IPv4 first to avoid Node 18-22 Windows `undici` TypeError: fetch failed
+// when dual-stack IPv6 routes time out against cloud APIs (Supabase, Anthropic, etc.).
+try {
+  dns.setDefaultResultOrder("ipv4first");
+} catch {
+  // Ignore if unsupported in older runtimes
+}
 
 const envPaths = [
   path.resolve(process.cwd(), ".env"),
@@ -12,8 +21,13 @@ for (const envPath of envPaths) {
 
 function getEnv(key: string, fallback = ""): string {
   const value = process.env[key];
-  return value !== undefined && value !== "" ? value : fallback;
+  return value !== undefined && value.trim() !== "" ? value.trim() : fallback;
 }
+
+const defaultLocalDataDir = getEnv(
+  "LOCAL_DATA_DIR",
+  path.resolve(process.cwd(), "data")
+);
 
 export const ENV = {
   HOST: getEnv("HOST", "0.0.0.0"),
@@ -21,17 +35,16 @@ export const ENV = {
   NODE_ENV: getEnv("NODE_ENV", "development"),
 
   // Storage & Queue Mode:
-  // "auto" uses Supabase/Redis when configured & reachable, otherwise falls back
-  // seamlessly to local persistent JSON storage and in-process async jobs.
+  // "auto" uses Supabase/Redis when configured & reachable, and automatically
+  // falls back to local persistent JSON storage / in-process queue if offline or paused.
   STORAGE_MODE: getEnv("STORAGE_MODE", "auto") as "auto" | "supabase" | "local",
   QUEUE_MODE: getEnv("QUEUE_MODE", "auto") as "auto" | "redis" | "memory",
-  LOCAL_DATA_DIR: getEnv(
-    "LOCAL_DATA_DIR",
-    path.resolve(process.cwd(), "data")
-  ),
-  UPLOADS_DIR: getEnv(
-    "UPLOADS_DIR",
-    path.resolve(process.cwd(), "uploads")
+  LOCAL_DATA_DIR: defaultLocalDataDir,
+  UPLOADS_DIR: getEnv("UPLOADS_DIR", path.resolve(process.cwd(), "uploads")),
+  // Keep Whisper model cache inside the repo drive (e.g. E:\...) rather than C:\Users\...\.cache
+  WHISPER_CACHE_DIR: getEnv(
+    "WHISPER_CACHE_DIR",
+    path.resolve(defaultLocalDataDir, "whisper-models")
   ),
   MAX_UPLOAD_MB: Number(getEnv("MAX_UPLOAD_MB", "50")),
 
@@ -45,6 +58,7 @@ export const ENV = {
     "SUPABASE_SERVICE_ROLE_KEY",
     getEnv("SUPABASE_SECRET_KEY")
   ),
+  SUPABASE_TIMEOUT_MS: Number(getEnv("SUPABASE_TIMEOUT_MS", "4000")),
 
   // JWT
   JWT_SECRET: getEnv(
@@ -73,7 +87,7 @@ export const ENV = {
   // Redis / BullMQ
   REDIS_URL: getEnv("REDIS_URL", ""),
 
-  // Official Meta Graph API oEmbed (avoids unauthenticated server scraping)
+  // Official Meta Graph API oEmbed
   FACEBOOK_APP_ACCESS_TOKEN: getEnv("FACEBOOK_APP_ACCESS_TOKEN"),
 
   // Optional self-hosted or licensed external media resolver webhook (e.g. Cobalt instance)
@@ -82,7 +96,7 @@ export const ENV = {
 
   // FFmpeg & Local Whisper (100% Free, No Credit Card)
   FFMPEG_PATH: getEnv("FFMPEG_PATH"),
-  PYTHON_BIN: getEnv("PYTHON_BIN", "python3"),
+  PYTHON_BIN: getEnv("PYTHON_BIN", ""),
   WHISPER_MODEL_SIZE: getEnv("WHISPER_MODEL_SIZE", "base"),
 
   // Transcription provider: "auto" | "local-whisper" | "groq" | "gemini"
@@ -113,15 +127,15 @@ export const ENV = {
   OLLAMA_BASE_URL: getEnv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
   OLLAMA_MODEL: getEnv("OLLAMA_MODEL", "llama3.2"),
 
-  // Anthropic (Optional paid option preserved from original repo)
+  // Anthropic
   ANTHROPIC_API_KEY: getEnv("ANTHROPIC_API_KEY"),
-  ANTHROPIC_MODEL: getEnv("ANTHROPIC_MODEL", "claude-sonnet-4-5"),
+  ANTHROPIC_MODEL: getEnv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
 
   ENABLE_VIDEO_TRANSCRIPTION:
     getEnv("ENABLE_VIDEO_TRANSCRIPTION", "true") === "true",
 } as const;
 
-export function isSupabaseConfigured(): boolean {
+export function hasSupabaseEnvCredentials(): boolean {
   if (ENV.STORAGE_MODE === "local") return false;
   const hasRealUrl =
     Boolean(ENV.SUPABASE_URL) &&
@@ -133,4 +147,13 @@ export function isSupabaseConfigured(): boolean {
     return true;
   }
   return hasRealUrl && hasRealKey;
+}
+
+/**
+ * Kept as synchronous helper for callers that only check static config;
+ * runtime repositories use `storageManager.withStorageFallback` which also
+ * verifies live Supabase reachability and falls back automatically when paused/offline.
+ */
+export function isSupabaseConfigured(): boolean {
+  return hasSupabaseEnvCredentials();
 }

@@ -12,15 +12,95 @@ export interface TranscriptionResult {
   provider: "groq-whisper" | "gemini-audio" | "local-whisper";
 }
 
+interface PythonCommand {
+  bin: string;
+  prefixArgs: string[];
+}
+
+let cachedPythonCmd: PythonCommand | null | undefined;
+
+/**
+ * Resolves a real Python 3 interpreter across Windows (`python`, `py -3`)
+ * and Linux/macOS (`python3`, `python`), avoiding the Windows Store stub.
+ */
+async function resolvePythonCommand(): Promise<PythonCommand | null> {
+  if (cachedPythonCmd !== undefined) {
+    return cachedPythonCmd;
+  }
+
+  const candidates: PythonCommand[] = [];
+  if (ENV.PYTHON_BIN) {
+    candidates.push({ bin: ENV.PYTHON_BIN, prefixArgs: [] });
+  }
+  if (process.platform === "win32") {
+    candidates.push(
+      { bin: "python", prefixArgs: [] },
+      { bin: "py", prefixArgs: ["-3"] },
+      { bin: "python3", prefixArgs: [] }
+    );
+  } else {
+    candidates.push(
+      { bin: "python3", prefixArgs: [] },
+      { bin: "python", prefixArgs: [] }
+    );
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const { stdout } = await execFileAsync(
+        candidate.bin,
+        [...candidate.prefixArgs, "-c", "import sys; print(sys.version_info[0])"],
+        { timeout: 4000 }
+      );
+      if (stdout.trim() === "3") {
+        cachedPythonCmd = candidate;
+        return cachedPythonCmd;
+      }
+    } catch {
+      // Try next candidate
+    }
+  }
+
+  cachedPythonCmd = null;
+  return null;
+}
+
+/**
+ * Builds child-process environment variables keeping all Whisper/HuggingFace
+ * model caches and temporary files on the repo drive (e.g. E:\...) instead of C:\.
+ */
+function buildDiskSafePythonEnv(): NodeJS.ProcessEnv {
+  const cacheDir = ENV.WHISPER_CACHE_DIR;
+  const tmpDir = path.join(ENV.UPLOADS_DIR, "tmp");
+  fs.mkdirSync(cacheDir, { recursive: true });
+  fs.mkdirSync(tmpDir, { recursive: true });
+
+  return {
+    ...process.env,
+    WHISPER_CACHE_DIR: cacheDir,
+    HF_HOME: cacheDir,
+    HUGGINGFACE_HUB_CACHE: cacheDir,
+    TORCH_HOME: cacheDir,
+    TMPDIR: tmpDir,
+    TEMP: tmpDir,
+    TMP: tmpDir,
+    PYTHONIOENCODING: "utf-8",
+  };
+}
+
 export async function isLocalWhisperInstalled(): Promise<boolean> {
+  const py = await resolvePythonCommand();
+  if (!py) return false;
+
   try {
     await execFileAsync(
-      ENV.PYTHON_BIN,
+      py.bin,
       [
+        ...py.prefixArgs,
         "-c",
         "import importlib.util, sys; ok = bool(importlib.util.find_spec('faster_whisper') or importlib.util.find_spec('whisper')); sys.exit(0 if ok else 1)",
       ],
-      { timeout: 5000 }
+      { timeout: 5000, env: buildDiskSafePythonEnv() }
     );
     return true;
   } catch {
@@ -28,10 +108,6 @@ export async function isLocalWhisperInstalled(): Promise<boolean> {
   }
 }
 
-/**
- * Provider 1: Groq Cloud Free-Tier Whisper (`whisper-large-v3-turbo`)
- * Free API key from https://console.groq.com — no credit card required.
- */
 async function transcribeWithGroq(
   mp3FilePath: string
 ): Promise<TranscriptionResult> {
@@ -75,11 +151,6 @@ async function transcribeWithGroq(
   };
 }
 
-/**
- * Provider 2: Google Gemini Free Tier (`gemini-2.5-flash`)
- * Free API key from https://aistudio.google.com — no credit card required.
- * Natively understands MP3 audio across English, Arabic, and 100+ languages.
- */
 async function transcribeWithGemini(
   mp3FilePath: string
 ): Promise<TranscriptionResult> {
@@ -137,13 +208,16 @@ async function transcribeWithGemini(
   };
 }
 
-/**
- * Provider 3: Local Open-Source Whisper (`faster-whisper` / `openai-whisper`)
- * 100% free, runs locally on CPU/GPU, zero API keys and zero credit card.
- */
 async function transcribeWithLocalWhisper(
   mp3FilePath: string
 ): Promise<TranscriptionResult> {
+  const py = await resolvePythonCommand();
+  if (!py) {
+    throw new Error(
+      "Python 3 was not found on PATH. Install Python 3 or set GROQ_API_KEY / GEMINI_API_KEY."
+    );
+  }
+
   const scriptCandidates = [
     path.resolve(process.cwd(), "scripts/transcribe_local.py"),
     path.resolve(__dirname, "../scripts/transcribe_local.py"),
@@ -154,9 +228,13 @@ async function transcribeWithLocalWhisper(
   }
 
   const { stdout } = await execFileAsync(
-    ENV.PYTHON_BIN,
-    [scriptPath, mp3FilePath, ENV.WHISPER_MODEL_SIZE],
-    { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
+    py.bin,
+    [...py.prefixArgs, scriptPath, mp3FilePath, ENV.WHISPER_MODEL_SIZE],
+    {
+      timeout: 300000,
+      maxBuffer: 10 * 1024 * 1024,
+      env: buildDiskSafePythonEnv(),
+    }
   );
 
   const parsed = JSON.parse(stdout.trim()) as {
@@ -171,9 +249,6 @@ async function transcribeWithLocalWhisper(
   };
 }
 
-/**
- * Transcribe an MP3 audio file using configured card-free speech-to-text providers.
- */
 export async function transcribeAudioFile(
   mp3FilePath: string
 ): Promise<TranscriptionResult | null> {
@@ -194,7 +269,6 @@ export async function transcribeAudioFile(
     return transcribeWithLocalWhisper(mp3FilePath);
   }
 
-  // "auto" cascade: Groq (free cloud, fast) -> Gemini (free cloud) -> Local Whisper (free offline)
   if (ENV.GROQ_API_KEY) {
     try {
       return await transcribeWithGroq(mp3FilePath);

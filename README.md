@@ -56,7 +56,9 @@ pip install -r requirements-whisper.txt
 npm run dev
 ```
 - Open `http://localhost:4000` for the **Web Companion App** (includes a 1-click **Instant Demo Workspace**).
-- Works out of the box with local persistent JSON storage (`backend/data/`) + in-process async jobs, and switches automatically to **Supabase + Redis/BullMQ** when `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `REDIS_URL` are set in `.env`.
+- **No Docker or Redis required:** Works natively on Windows/macOS/Linux with bundled static `ffmpeg`. In default `STORAGE_MODE=auto`, if your Supabase project is paused/offline or tables aren't created yet, the server automatically falls back to local persistent JSON storage (`backend/data/local-db.json`) so login/signup/demo always work.
+- **Windows Low-`C:`-Drive Launcher:** Run `backend\start-windows.bat` to pin `npm`, `pip`, temp files, and Whisper model caches onto your repo drive (e.g. `E:\GitHub-Repoz\Reel-Saver\backend\data`) so `C:\` disk space is untouched.
+- **Supabase Cloud Setup (Optional):** When your Supabase project is active, paste `backend/db/migrations/00000000000000_init_full_schema.sql` into the Supabase SQL Editor once to initialize `users`, `Category`, and `Reel`.
 
 ### 2. Run End-to-End Verification Suite
 ```bash

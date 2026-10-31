@@ -5,10 +5,15 @@ import os from "os";
 import path from "path";
 import { promisify } from "util";
 
-// Isolate test storage from dev workspace
+// Isolate test storage from dev workspace AND simulate an unreachable/paused
+// Supabase URL + unreachable Redis URL in `auto` mode to verify seamless fallback!
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "reel-saver-e2e-"));
-process.env.STORAGE_MODE = "local";
-process.env.QUEUE_MODE = "memory";
+process.env.STORAGE_MODE = "auto";
+process.env.QUEUE_MODE = "auto";
+process.env.SUPABASE_URL = "https://unreachable-paused-project.supabase.co";
+process.env.SUPABASE_SECRET_KEY = "sb_secret_simulated_paused_project";
+process.env.SUPABASE_TIMEOUT_MS = "1200";
+process.env.REDIS_URL = "redis://127.0.0.1:6379";
 process.env.LOCAL_DATA_DIR = path.join(tmpRoot, "data");
 process.env.UPLOADS_DIR = path.join(tmpRoot, "uploads");
 process.env.NODE_ENV = "test";
@@ -47,23 +52,37 @@ async function run() {
     );
     console.log("[E2E] 1/6 System capabilities verified (FFmpeg ready).");
 
-    // 2. Register user
+    // 2. Register & Login user (even with unreachable SUPABASE_URL in .env!)
+    const testEmail = `tester-${Date.now()}@example.com`;
+    const testPassword = "StrongPassword#2026!";
     const regRes = await fetch(`${baseUrl}/api/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         name: "Test User",
-        email: `tester-${Date.now()}@example.com`,
-        password: "StrongPassword#2026!",
+        email: testEmail,
+        password: testPassword,
       }),
     });
     assert.strictEqual(regRes.status, 201);
-    const regJson = (await regRes.json()) as {
+
+    const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: testEmail,
+        password: testPassword,
+      }),
+    });
+    assert.strictEqual(loginRes.status, 200);
+    const loginJson = (await loginRes.json()) as {
       data: { tokens: { accessToken: string } };
     };
-    const token = regJson.data.tokens.accessToken;
-    assert.ok(token, "Expected JWT access token");
-    console.log("[E2E] 2/6 User registration & JWT issuance verified.");
+    const token = loginJson.data.tokens.accessToken;
+    assert.ok(token, "Expected JWT access token from login");
+    console.log(
+      "[E2E] 2/6 Register + Login verified cleanly with unreachable Supabase auto-fallback."
+    );
 
     // 3. Generate a real 2-second MP4 video (video + audio streams) via FFmpeg
     const ffmpegBin = resolveFfmpegPath();
