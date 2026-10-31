@@ -29,6 +29,21 @@ function decodeHtmlEntities(text: string): string {
     .replace(/&gt;/g, ">");
 }
 
+function parseCaptionFromOgDescription(description: string): string | null {
+  const match = description.match(/"([^"]+)"/);
+  if (match?.[1]) {
+    return decodeHtmlEntities(match[1].trim());
+  }
+
+  const colonMatch = description.match(/:\s*(.+)$/);
+  return colonMatch ? decodeHtmlEntities(colonMatch[1].trim()) : null;
+}
+
+function parseAuthorFromOgTitle(title: string): string | null {
+  const match = title.match(/\(@([^\)]+)\)/);
+  return match?.[1] ?? null;
+}
+
 export async function extractReelContent(sourceUrl: string): Promise<ExtractedMetadata> {
   const normalizedUrl = normalizeInstagramUrl(sourceUrl);
   const params = new URLSearchParams({ url: normalizedUrl });
@@ -56,8 +71,35 @@ export async function extractReelContent(sourceUrl: string): Promise<ExtractedMe
   // blocks — identify it by that fixed phrase, and treat any *other*
   // non-empty paragraph as the caption.
   const authorParagraph = paragraphs.find((p) => /^A post shared by/i.test(p));
-  const authorHandle = authorParagraph?.match(/\(@([\w.]+)\)/)?.[1] ?? null;
-  const caption = paragraphs.find((p) => p !== authorParagraph) ?? null;
+  let authorHandle = authorParagraph?.match(/\(@([\w.]+)\)/)?.[1] ?? null;
+  let caption = paragraphs.find((p) => p !== authorParagraph) ?? null;
+
+  if (!caption) {
+    const pageResponse = await fetch(normalizedUrl, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+      },
+    });
+
+    if (!pageResponse.ok) {
+      const body = await pageResponse.text();
+      throw new ExtractionError(
+        f"Instagram page request failed ({pageResponse.status}). The reel may be private, blocked, or the URL malformed. {body}"
+      );
+    }
+
+    const html = await pageResponse.text();
+    const ogDescriptionMatch = html.match(/<meta property=\"og:description\" content=\"([^\"]*)\" \/>/i);
+    const ogTitleMatch = html.match(/<meta property=\"og:title\" content=\"([^\"]*)\" \/>/i);
+
+    if (ogDescriptionMatch?.[1]) {
+      caption = parseCaptionFromOgDescription(ogDescriptionMatch[1]);
+    }
+    if (ogTitleMatch?.[1]) {
+      authorHandle = authorHandle ?? parseAuthorFromOgTitle(ogTitleMatch[1]);
+    }
+  }
 
   return { authorHandle, caption, thumbnailUrl: null };
 }

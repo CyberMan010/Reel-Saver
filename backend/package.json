@@ -11,7 +11,8 @@
     "start:server": "node dist/server.js",
     "start:worker": "node dist/worker.js",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:ai": "npx tsx scripts/test-ai.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

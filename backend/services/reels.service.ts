@@ -84,6 +84,8 @@ export async function processReel(reelId: string): Promise<void> {
     await reelRepo.updateReelStatus(reelId, "SUMMARIZING", null);
 
     const aiResult = await summarizeReelCaption(extracted.caption, extracted.authorHandle);
+    await reelRepo.updateReelExtraction(reelId, { transcript: aiResult.transcript });
+
     const category = await categoryRepo.findOrCreateCategory(reel.userId, aiResult.category);
 
     await reelRepo.updateReelSummary(reelId, {
