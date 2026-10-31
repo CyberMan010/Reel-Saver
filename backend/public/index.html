@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reel-Saver — AI Reel Transcript, Summary &amp; Organizer</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <!-- ─── AUTH VIEW ────────────────────────────────────────────────────── -->
+  <div id="authView" class="auth-wrapper">
+    <div class="auth-card">
+      <div class="brand-header">
+        <div class="brand-logo">RS</div>
+        <div>
+          <div class="brand-title">Reel-Saver</div>
+        </div>
+      </div>
+      <p class="auth-subtitle">
+        Share an Instagram Reel link or upload MP4/MP3 — auto-convert to audio, transcribe for free, summarize, and organize in editable categories.
+      </p>
+
+      <div class="tabs">
+        <button id="tabLogin" class="tab-btn active" type="button">Sign In</button>
+        <button id="tabRegister" class="tab-btn" type="button">Create Account</button>
+      </div>
+
+      <form id="authForm">
+        <div id="nameFieldWrap" class="form-group hidden">
+          <label for="authName">Full Name</label>
+          <input id="authName" type="text" placeholder="Zaid Al-Mansoor" />
+        </div>
+        <div class="form-group">
+          <label for="authEmail">Email</label>
+          <input id="authEmail" type="email" placeholder="you@example.com" required />
+        </div>
+        <div class="form-group">
+          <label for="authPassword">Password</label>
+          <input id="authPassword" type="password" placeholder="Min 8 chars, A-z, 0-9, symbol" required />
+        </div>
+        <button id="authSubmitBtn" class="btn btn-primary btn-block" type="submit">
+          Sign In
+        </button>
+      </form>
+
+      <div class="divider">OR INSTANT PREVIEW</div>
+
+      <button id="quickDemoBtn" class="btn btn-secondary btn-block" type="button">
+        Launch Instant Demo Workspace (With Sample Reels)
+      </button>
+    </div>
+  </div>
+
+  <!-- ─── MAIN DASHBOARD VIEW ──────────────────────────────────────────── -->
+  <div id="appView" class="app-layout hidden">
+    <aside class="sidebar">
+      <div class="brand-header">
+        <div class="brand-logo">RS</div>
+        <div>
+          <div class="brand-title" style="font-size:18px;">Reel-Saver</div>
+          <div id="userEmailLabel" style="font-size:12px;color:var(--text-muted);"></div>
+        </div>
+      </div>
+
+      <button id="openAddModalBtn" class="btn btn-primary btn-block" type="button">
+        + Share Link or MP4 / MP3
+      </button>
+
+      <div>
+        <div class="sidebar-section-title">
+          <span>Categories</span>
+          <button id="newCategoryBtn" class="icon-btn" title="Create new category" type="button">+ New</button>
+        </div>
+        <div id="categoryList" class="category-list"></div>
+      </div>
+
+      <div class="system-card">
+        <div class="sys-badge" id="sysStatusTitle">● Pipeline Active</div>
+        <div id="sysStatusDetails">Checking FFmpeg &amp; card-free transcription...</div>
+        <div style="margin-top:10px;display:flex;gap:8px;">
+          <button id="logoutBtn" class="btn btn-secondary btn-sm btn-block" type="button">Log Out</button>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <div class="topbar">
+        <div>
+          <h1 id="currentViewTitle" style="font-size:23px;font-weight:700;">All Saved Reels</h1>
+          <p id="currentViewSubtitle" style="font-size:13px;color:var(--text-muted);">
+            Click any reel to listen to extracted MP3, rename its category, or edit summary &amp; transcript.
+          </p>
+        </div>
+        <div class="search-row">
+          <input id="searchInput" type="text" placeholder="Search transcripts, summaries, notes..." />
+          <select id="statusFilter" style="width:155px;">
+            <option value="">All Statuses</option>
+            <option value="DONE">Done</option>
+            <option value="PENDING">Pending</option>
+            <option value="EXTRACTING">Extracting</option>
+            <option value="TRANSCRIBING">Transcribing</option>
+            <option value="SUMMARIZING">Summarizing</option>
+            <option value="FAILED">Failed</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="reelsContainer" class="reels-grid"></div>
+    </main>
+  </div>
+
+  <!-- ─── ADD / SHARE REEL MODAL ───────────────────────────────────────── -->
+  <div id="addReelModal" class="modal-backdrop hidden">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <div class="modal-title">Save Instagram Reel (Link or MP4 / MP3)</div>
+        <button id="closeAddModalBtn" class="icon-btn" type="button">✕</button>
+      </div>
+
+      <form id="addReelForm">
+        <div class="form-group">
+          <label for="reelSourceUrl">Instagram Reel URL (optional if uploading MP4/MP3)</label>
+          <input id="reelSourceUrl" type="url" placeholder="https://www.instagram.com/reel/C8abc123/" />
+        </div>
+
+        <div class="form-group">
+          <label>Upload Reel Video (.mp4 / .mov / .webm) or Audio (.mp3 / .m4a / .wav)</label>
+          <div id="mediaDropzone" class="dropzone">
+            <input id="reelMediaFile" type="file" accept="video/*,audio/*,.mp4,.mov,.webm,.mp3,.m4a,.wav,.ogg" class="hidden" />
+            <div id="dropzoneText" style="font-size:13.5px;color:var(--text-muted);">
+              Click or drag &amp; drop an <strong>MP4</strong> or <strong>MP3</strong> here — FFmpeg converts MP4 → 16kHz MP3 automatically
+            </div>
+          </div>
+          <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px;">
+            <button id="generateSampleAudioBtn" class="btn btn-secondary btn-sm" type="button">
+              Generate Test Audio Clip (.wav → FFmpeg .mp3)
+            </button>
+            <button id="dictateSpeechBtn" class="btn btn-secondary btn-sm" type="button">
+              🎙 Free Browser Voice Dictation
+            </button>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div class="form-group">
+            <label for="reelAuthor">Creator Handle (optional)</label>
+            <input id="reelAuthor" type="text" placeholder="@creator" />
+          </div>
+          <div class="form-group">
+            <label for="reelCategoryInput">Category (blank = AI auto-picks)</label>
+            <input id="reelCategoryInput" list="categorySuggestions" type="text" placeholder="Auto-categorize with AI" />
+            <datalist id="categorySuggestions"></datalist>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="reelCaption">Reel Caption / Shared Text (optional — avoids server IP hitting Meta)</label>
+          <textarea id="reelCaption" placeholder="Paste caption or shared text from Instagram..."></textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="reelTranscriptInput">Pre-Captured Spoken Transcript (optional — leave empty for server STT)</label>
+          <textarea id="reelTranscriptInput" placeholder="Leave empty to transcribe uploaded MP4/MP3 automatically, or dictate/paste speech here..."></textarea>
+        </div>
+
+        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px;">
+          <button id="cancelAddBtn" class="btn btn-secondary" type="button">Cancel</button>
+          <button id="submitAddReelBtn" class="btn btn-primary" type="submit">
+            Process &amp; Summarize Reel
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ─── REEL DETAIL & FULL ADJUSTMENT MODAL ──────────────────────────── -->
+  <div id="detailModal" class="modal-backdrop hidden">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <div>
+          <span id="detailStatusBadge" class="badge badge-done">DONE</span>
+          <span id="detailSourceBadge" style="font-size:12px;color:var(--text-muted);margin-left:8px;"></span>
+        </div>
+        <button id="closeDetailBtn" class="icon-btn" type="button">✕</button>
+      </div>
+
+      <div id="detailAudioBox" class="audio-box hidden">
+        <div style="font-size:12.5px;font-weight:600;color:#cbd5e1;" id="detailAudioLabel">Extracted MP3 Audio</div>
+        <audio id="detailAudioPlayer" controls preload="metadata"></audio>
+      </div>
+
+      <form id="editReelForm">
+        <input id="editReelId" type="hidden" />
+
+        <div class="form-group">
+          <label for="editTitle">Title (Editable)</label>
+          <input id="editTitle" type="text" placeholder="Reel title..." />
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div class="form-group">
+            <label for="editCategoryName">Category (Pick or type any custom name)</label>
+            <input id="editCategoryName" list="categorySuggestions" type="text" placeholder="e.g. Recipes, Gym Leg Day..." />
+          </div>
+          <div class="form-group">
+            <label for="editAuthor">Author Handle</label>
+            <input id="editAuthor" type="text" placeholder="@handle" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="editSummary">AI Summary (Editable)</label>
+          <textarea id="editSummary" rows="3"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="editKeyPoints">Key Points (One bullet per line — Editable)</label>
+          <textarea id="editKeyPoints" rows="4"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="editTranscript">Full Transcript (Editable)</label>
+          <textarea id="editTranscript" rows="4"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="editNotes">Personal Notes &amp; Adjustments</label>
+          <textarea id="editNotes" rows="2" placeholder="Add your own reminders, substitutions, links..."></textarea>
+        </div>
+
+        <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin-top:18px;padding-top:14px;border-top:1px solid var(--border);">
+          <div style="display:flex;flex-wrap:wrap;gap:8px;">
+            <button id="deleteReelBtn" class="btn btn-danger btn-sm" type="button">Delete</button>
+            <button id="resummarizeBtn" class="btn btn-secondary btn-sm" type="button">↻ Re-Summarize Transcript</button>
+            <label class="btn btn-secondary btn-sm" style="cursor:pointer;">
+              📎 Attach MP4/MP3
+              <input id="attachMediaInput" type="file" accept="video/*,audio/*,.mp4,.mp3,.m4a,.wav" class="hidden" />
+            </label>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <a id="openOriginalUrlBtn" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">Open Source ↗</a>
+            <button id="saveEditsBtn" class="btn btn-primary btn-sm" type="submit">Save Adjustments</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

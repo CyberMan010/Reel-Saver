@@ -1,14 +1,34 @@
 import { body, param, query } from "express-validator";
 
-const REEL_STATUSES = ["PENDING", "EXTRACTING", "SUMMARIZING", "DONE", "FAILED"] as const;
+const REEL_STATUSES = [
+  "PENDING",
+  "EXTRACTING",
+  "TRANSCRIBING",
+  "SUMMARIZING",
+  "DONE",
+  "FAILED",
+] as const;
 
 export const createReelValidators = [
   body("sourceUrl")
+    .optional({ values: "falsy" })
     .trim()
-    .notEmpty()
-    .withMessage("sourceUrl is required.")
-    .isURL({ require_protocol: true })
-    .withMessage("sourceUrl must be a valid URL."),
+    .custom((val: string) => {
+      if (val.startsWith("upload://")) return true;
+      try {
+        const parsed = new URL(val);
+        return parsed.protocol === "http:" || parsed.protocol === "https:";
+      } catch {
+        return false;
+      }
+    })
+    .withMessage("sourceUrl must be a valid http/https URL."),
+  body("title").optional().isString().isLength({ max: 200 }),
+  body("authorHandle").optional().isString().isLength({ max: 120 }),
+  body("caption").optional().isString().isLength({ max: 10000 }),
+  body("transcript").optional().isString().isLength({ max: 50000 }),
+  body("notes").optional().isString().isLength({ max: 10000 }),
+  body("categoryName").optional().isString().isLength({ max: 80 }),
 ];
 
 export const reelIdParamValidator = [
@@ -26,9 +46,50 @@ export const listReelsValidators = [
     .trim()
     .notEmpty()
     .withMessage("categoryId cannot be empty."),
+  query("search").optional().isString().isLength({ max: 200 }),
 ];
 
 export const updateCategoryValidators = [
   param("id").isUUID().withMessage("id must be a valid UUID."),
-  body("categoryName").trim().notEmpty().withMessage("categoryName is required."),
+  body("categoryName").isString().withMessage("categoryName must be a string."),
+];
+
+export const updateReelValidators = [
+  param("id").isUUID().withMessage("id must be a valid UUID."),
+  body("title")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 200 })
+    .withMessage("title must be up to 200 characters."),
+  body("authorHandle")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 120 }),
+  body("caption")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 10000 }),
+  body("transcript")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 50000 }),
+  body("summary")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 10000 }),
+  body("notes")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 10000 }),
+  body("keyPoints")
+    .optional()
+    .isArray({ max: 20 })
+    .withMessage("keyPoints must be an array of strings."),
+  body("keyPoints.*").optional().isString(),
+  body("categoryName")
+    .optional({ nullable: true })
+    .isString()
+    .isLength({ max: 80 }),
+  body("categoryId").optional({ nullable: true }).isString(),
+  body("resummarize").optional().isBoolean(),
 ];

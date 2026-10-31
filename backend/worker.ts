@@ -1,15 +1,22 @@
 import "./config/env";
 import { Worker } from "bullmq";
 import { redisConnection } from "./config/redis";
-import { REEL_PROCESSING_QUEUE } from "./jobs/reels.queue";
+import { REEL_PROCESSING_QUEUE, type ReelJobPayload } from "./jobs/reels.queue";
 import { processReel } from "./services/reels.service";
 
 const worker = new Worker(
   REEL_PROCESSING_QUEUE,
   async (job) => {
-    const { reelId } = job.data as { reelId: string };
-    console.log(`[Worker] Processing reel ${reelId} (attempt ${job.attemptsMade + 1})`);
-    await processReel(reelId);
+    const { reelId, uploadedFilePath, uploadedMimeType } =
+      job.data as ReelJobPayload;
+    console.log(
+      `[Worker] Processing reel ${reelId} (attempt ${job.attemptsMade + 1})`
+    );
+    await processReel(reelId, {
+      uploadedFilePath,
+      uploadedMimeType,
+      forceReprocess: true,
+    });
     console.log(`[Worker] Reel ${reelId} processed successfully.`);
   },
   { connection: redisConnection }
