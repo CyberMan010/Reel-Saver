@@ -6,6 +6,7 @@ import {
   createReelValidators,
   listReelsValidators,
   reelIdParamValidator,
+  updateCategoryValidators,
 } from "../validators/reels.validators";
 
 const router = Router();
@@ -46,6 +47,13 @@ router.get(
   reelIdParamValidator,
   handleValidationErrors,
   reelsController.getReel
+);
+
+router.patch(
+  "/:id/category",
+  updateCategoryValidators,
+  handleValidationErrors,
+  reelsController.updateCategory
 );
 
 export default router;

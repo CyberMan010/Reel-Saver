@@ -17,6 +17,7 @@ export const REEL_CATEGORIES = [
 export type ReelCategory = (typeof REEL_CATEGORIES)[number];
 
 export const aiSummarySchema = z.object({
+  transcript: z.string().min(1),
   summary: z.string().min(1),
   keyPoints: z.array(z.string().min(1)).min(1).max(8),
   category: z.enum(REEL_CATEGORIES),
@@ -31,7 +32,7 @@ const anthropic = new Anthropic({
 function buildPrompt(caption: string, authorHandle: string | null): string {
   return `You summarize Instagram Reels for a personal library app.
 
-The only available content is the reel caption (Instagram does not provide video/audio transcripts).
+The only available content is the reel caption and the author handle. There is no actual audio or video feed available.
 
 Author: ${authorHandle ?? "unknown"}
 Caption:
@@ -39,8 +40,15 @@ Caption:
 ${caption}
 """
 
+Your task:
+1) Produce a plausible spoken transcript for the reel based on the caption and author context.
+2) Write a short 2-3 sentence summary of the reel.
+3) Create 3-6 concise key points.
+4) Choose exactly one category from the allowed list.
+
 Return ONLY valid JSON with this exact shape:
 {
+  "transcript": "Plausible transcript text",
   "summary": "2-3 sentence brief of what the reel is about",
   "keyPoints": ["3-6 concise bullet points"],
   "category": "<one category from the allowed list>"
@@ -49,7 +57,7 @@ Return ONLY valid JSON with this exact shape:
 Allowed categories (pick exactly one):
 ${REEL_CATEGORIES.map((c) => `- ${c}`).join("\n")}
 
-If the caption is sparse, infer reasonable context but stay grounded in the text.`;
+If the caption is sparse or missing, infer a reasonable transcript and summary from the available text, but be explicit that the transcript is an inferred approximation.`;
 }
 
 function parseAiJson(raw: string): unknown {
@@ -70,6 +78,9 @@ export async function summarizeReelCaption(
   const text = caption?.trim();
   if (!text) {
     return {
+      transcript: authorHandle
+        ? `No caption was provided for this reel by ${authorHandle}. No transcript could be inferred.`
+        : "No caption was provided for this reel. No transcript could be inferred.",
       summary: authorHandle
         ? `No caption was provided for this reel by ${authorHandle}.`
         : "No caption was provided for this reel.",

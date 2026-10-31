@@ -135,3 +135,15 @@ export async function markReelFailed(
 
   if (error) throw new Error(error.message);
 }
+
+export async function updateReelCategory(id: string, categoryId: string): Promise<Reel> {
+  const { data, error } = await supabaseAdmin
+    .from(TABLE)
+    .update({ categoryId })
+    .eq("id", id)
+    .select("*")
+    .single();
+
+  if (error) throw new Error(error.message);
+  return data as Reel;
+}

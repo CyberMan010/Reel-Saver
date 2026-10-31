@@ -27,3 +27,8 @@ export const listReelsValidators = [
     .notEmpty()
     .withMessage("categoryId cannot be empty."),
 ];
+
+export const updateCategoryValidators = [
+  param("id").isUUID().withMessage("id must be a valid UUID."),
+  body("categoryName").trim().notEmpty().withMessage("categoryName is required."),
+];
