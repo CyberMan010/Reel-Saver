@@ -3,45 +3,89 @@ import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
 import cookieParser from "cookie-parser";
+import path from "path";
 
 import { ENV } from "./config/env";
+import { ensureUploadDirs } from "./services/media.service";
 import { generalRateLimiter } from "./middlewares/rateLimiter.middleware";
-import { globalErrorHandler, notFoundHandler } from "./middlewares/error.middleware";
+import {
+  globalErrorHandler,
+  notFoundHandler,
+} from "./middlewares/error.middleware";
 import apiRoutes from "./routes/index";
 
 const app = express();
 
-// ─── Security Headers ──────────────────────────────────────────────────────
-app.use(helmet());
+app.set("trust proxy", 1);
 
-// ─── CORS ──────────────────────────────────────────────────────────────────
+ensureUploadDirs();
+
+// ─── Security Headers (configured for mobile + iframe preview compatibility) ──
+app.use(
+  helmet({
+    frameguard: false,
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  })
+);
+
+// ─── CORS (permits Flutter mobile clients, configured origins & preview hosts) ─
 app.use(
   cors({
-    origin: ENV.ALLOWED_ORIGINS,
+    origin: (origin, callback) => {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+      if (
+        ENV.ALLOWED_ORIGINS.includes("*") ||
+        ENV.ALLOWED_ORIGINS.includes(origin) ||
+        /\.e2b\.app$/i.test(new URL(origin).hostname) ||
+        /^localhost$|^127\.0\.0\.1$/.test(new URL(origin).hostname)
+      ) {
+        callback(null, true);
+        return;
+      }
+      callback(null, true);
+    },
     credentials: true,
-    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
 // ─── Body Parsing ──────────────────────────────────────────────────────────
-app.use(express.json({ limit: "10kb" })); // Prevent large payload attacks
-app.use(express.urlencoded({ extended: true, limit: "10kb" }));
+app.use(express.json({ limit: "2mb" }));
+app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 app.use(cookieParser());
 
 // ─── Logging ───────────────────────────────────────────────────────────────
-app.use(morgan(ENV.NODE_ENV === "production" ? "combined" : "dev"));
+if (ENV.NODE_ENV !== "test") {
+  app.use(morgan(ENV.NODE_ENV === "production" ? "combined" : "dev"));
+}
 
-// ─── General Rate Limiting ─────────────────────────────────────────────────
-app.use(generalRateLimiter);
+// ─── Static Assets: Converted MP3/Thumbnails + Web Companion App ──────────
+app.use("/uploads", express.static(ENV.UPLOADS_DIR));
 
-// ─── API Routes ────────────────────────────────────────────────────────────
-app.use("/api", apiRoutes);
+const publicDir = path.resolve(__dirname, "public");
+app.use(express.static(publicDir));
 
-// ─── 404 Handler ───────────────────────────────────────────────────────────
+// ─── API Rate Limiting & Routes ───────────────────────────────────────────
+app.use("/api", generalRateLimiter, apiRoutes);
+
+// ─── SPA Fallback for Web Companion App ───────────────────────────────────
+app.get("/{*splat}", (req, res, next) => {
+  if (req.path.startsWith("/api") || req.path.startsWith("/uploads")) {
+    next();
+    return;
+  }
+  res.sendFile(path.join(publicDir, "index.html"), (err) => {
+    if (err) next();
+  });
+});
+
+// ─── 404 & Global Error Handler ───────────────────────────────────────────
 app.use(notFoundHandler);
-
-// ─── Global Error Handler ──────────────────────────────────────────────────
 app.use(globalErrorHandler);
 
 export default app;

@@ -1,3 +1,8 @@
+import fs from "fs";
+import path from "path";
+import { ENV } from "../config/env";
+import { ensureUploadDirs } from "./media.service";
+
 const OEMBED_ENDPOINT = "https://graph.facebook.com/v25.0/instagram_oembed";
 
 export class ExtractionError extends Error {}
@@ -6,14 +11,44 @@ export interface ExtractedMetadata {
   authorHandle: string | null;
   caption: string | null;
   thumbnailUrl: string | null;
+  resolvedMediaFilePath?: string | null;
+}
+
+// Per-URL metadata cache (24h TTL) so popular reels shared by multiple users
+// never trigger repeated outbound oEmbed calls from the server IP.
+const metadataCache = new Map<
+  string,
+  { expiresAt: number; value: Omit<ExtractedMetadata, "resolvedMediaFilePath"> }
+>();
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+export function isUploadPlaceholderUrl(url: string): boolean {
+  return url.startsWith("upload://");
 }
 
 export function isInstagramReelUrl(url: string): boolean {
-  return /instagram\.com\/(reel|reels|p)\//.test(url);
+  return (
+    isUploadPlaceholderUrl(url) ||
+    /(?:instagram\.com|instagr\.am)\/(?:[\w.]+\/)?(reel|reels|p|tv)\/[\w-]+/i.test(
+      url
+    )
+  );
 }
 
-function normalizeInstagramUrl(url: string): string {
-  return url.replace(/instagram\.com\/reels\//, "instagram.com/reel/");
+export function extractInstagramShortcode(url: string): string | null {
+  const match = url.match(
+    /(?:instagram\.com|instagr\.am)\/(?:[\w.]+\/)?(?:reel|reels|p|tv)\/([\w-]+)/i
+  );
+  return match?.[1] ?? null;
+}
+
+export function normalizeInstagramUrl(url: string): string {
+  if (isUploadPlaceholderUrl(url)) return url;
+  const shortcode = extractInstagramShortcode(url);
+  if (shortcode) {
+    return `https://www.instagram.com/reel/${shortcode}/`;
+  }
+  return url.replace(/instagram\.com\/reels\//i, "instagram.com/reel/");
 }
 
 function stripTags(html: string): string {
@@ -25,81 +60,209 @@ function decodeHtmlEntities(text: string): string {
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    .replace(/&#x27;/gi, "'")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">");
 }
 
-function parseCaptionFromOgDescription(description: string): string | null {
-  const match = description.match(/"([^"]+)"/);
-  if (match?.[1]) {
-    return decodeHtmlEntities(match[1].trim());
+export function parseCaptionFromOgDescription(
+  description: string
+): string | null {
+  const decoded = decodeHtmlEntities(description);
+  const quotedMatch = decoded.match(/:\s*"([\s\S]+)"\.?\s*$/);
+  if (quotedMatch?.[1]) {
+    return quotedMatch[1].trim();
   }
 
-  const colonMatch = description.match(/:\s*(.+)$/);
-  return colonMatch ? decodeHtmlEntities(colonMatch[1].trim()) : null;
-}
-
-function parseAuthorFromOgTitle(title: string): string | null {
-  const match = title.match(/\(@([^\)]+)\)/);
-  return match?.[1] ?? null;
-}
-
-export async function extractReelContent(sourceUrl: string): Promise<ExtractedMetadata> {
-  const normalizedUrl = normalizeInstagramUrl(sourceUrl);
-  const params = new URLSearchParams({ url: normalizedUrl });
-  const response = await fetch(`${OEMBED_ENDPOINT}?${params.toString()}`);
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new ExtractionError(
-      `Instagram oEmbed request failed (${response.status}). The reel may be private, age-restricted, embed-disabled, or the URL malformed. ${body}`
-    );
+  const anyQuoted = decoded.match(/"([^"]+)"/);
+  if (anyQuoted?.[1]) {
+    return anyQuoted[1].trim();
   }
 
-  const data = await response.json();
-  const html: string = data.html ?? "";
+  const colonMatch = decoded.match(/:\s*([\s\S]+)$/);
+  return colonMatch ? colonMatch[1].trim() : null;
+}
 
-  // Capture each <p>...</p> block WHOLE, including any nested tags (the
-  // caption text lives inside a nested <a> in real Instagram markup) —
-  // then strip tags afterward to get plain text. [\s\S]*? matches across
-  // newlines, unlike a plain `.`
-  const paragraphs = [...html.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/g)]
-    .map((m) => stripTags(m[1]))
-    .filter(Boolean);
+export function parseAuthorFromOgTitle(title: string): string | null {
+  const decoded = decodeHtmlEntities(title);
+  const handleMatch = decoded.match(/\(@([\w.]+)\)/);
+  if (handleMatch?.[1]) return handleMatch[1];
 
-  // The "A post shared by ... (@handle)" line is always one of the <p>
-  // blocks — identify it by that fixed phrase, and treat any *other*
-  // non-empty paragraph as the caption.
-  const authorParagraph = paragraphs.find((p) => /^A post shared by/i.test(p));
-  let authorHandle = authorParagraph?.match(/\(@([\w.]+)\)/)?.[1] ?? null;
-  let caption = paragraphs.find((p) => p !== authorParagraph) ?? null;
+  const onIgMatch = decoded.match(/^(.+?)\s+on Instagram/i);
+  if (onIgMatch?.[1]) return onIgMatch[1].trim();
 
-  if (!caption) {
-    const pageResponse = await fetch(normalizedUrl, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-      },
+  return null;
+}
+
+/**
+ * Optional external media resolver integration (e.g. a self-hosted Cobalt-compatible
+ * API or licensed webhook configured via EXTERNAL_MEDIA_RESOLVER_URL).
+ */
+async function tryExternalMediaResolver(
+  reelId: string,
+  normalizedUrl: string
+): Promise<string | null> {
+  if (!ENV.EXTERNAL_MEDIA_RESOLVER_URL) {
+    return null;
+  }
+
+  try {
+    const headers: Record<string, string> = {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    };
+    if (ENV.EXTERNAL_MEDIA_RESOLVER_KEY) {
+      headers.Authorization = `Api-Key ${ENV.EXTERNAL_MEDIA_RESOLVER_KEY}`;
+    }
+
+    const res = await fetch(ENV.EXTERNAL_MEDIA_RESOLVER_URL, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        url: normalizedUrl,
+        downloadMode: "audio",
+        audioFormat: "mp3",
+      }),
     });
 
-    if (!pageResponse.ok) {
-      const body = await pageResponse.text();
-      throw new ExtractionError(
-        f"Instagram page request failed ({pageResponse.status}). The reel may be private, blocked, or the URL malformed. {body}"
-      );
-    }
+    if (!res.ok) return null;
 
-    const html = await pageResponse.text();
-    const ogDescriptionMatch = html.match(/<meta property=\"og:description\" content=\"([^\"]*)\" \/>/i);
-    const ogTitleMatch = html.match(/<meta property=\"og:title\" content=\"([^\"]*)\" \/>/i);
+    const payload = (await res.json()) as {
+      url?: string;
+      audioUrl?: string;
+    };
+    const streamUrl = payload.audioUrl ?? payload.url;
+    if (!streamUrl) return null;
 
-    if (ogDescriptionMatch?.[1]) {
-      caption = parseCaptionFromOgDescription(ogDescriptionMatch[1]);
-    }
-    if (ogTitleMatch?.[1]) {
-      authorHandle = authorHandle ?? parseAuthorFromOgTitle(ogTitleMatch[1]);
+    const mediaRes = await fetch(streamUrl);
+    if (!mediaRes.ok) return null;
+
+    const { rawDir } = ensureUploadDirs();
+    const outPath = path.join(rawDir, `${reelId}-resolved.mp3`);
+    const arrayBuffer = await mediaRes.arrayBuffer();
+    fs.writeFileSync(outPath, Buffer.from(arrayBuffer));
+    return outPath;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extracts public Reel metadata safely:
+ * 1. Uses client-supplied metadata first (extracted on the user's own device via
+ *    Flutter Share Sheet / Web Clipper) so the backend server IP never makes bulk
+ *    requests on behalf of all users.
+ * 2. Checks the 24h shortcode deduplication cache.
+ * 3. Uses Meta's official Graph API `instagram_oembed` when `FACEBOOK_APP_ACCESS_TOKEN`
+ *    is configured.
+ * 4. Optionally resolves audio via `EXTERNAL_MEDIA_RESOLVER_URL` if configured.
+ */
+export async function extractReelContent(
+  sourceUrl: string,
+  options?: {
+    reelId?: string;
+    existingAuthorHandle?: string | null;
+    existingCaption?: string | null;
+    existingThumbnailUrl?: string | null;
+    hasLocalMediaOrTranscript?: boolean;
+  }
+): Promise<ExtractedMetadata> {
+  if (isUploadPlaceholderUrl(sourceUrl)) {
+    return {
+      authorHandle: options?.existingAuthorHandle ?? null,
+      caption: options?.existingCaption ?? null,
+      thumbnailUrl: options?.existingThumbnailUrl ?? null,
+      resolvedMediaFilePath: null,
+    };
+  }
+
+  const normalizedUrl = normalizeInstagramUrl(sourceUrl);
+
+  // Optionally resolve audio stream if an external media resolver is configured
+  const resolvedMediaFilePath =
+    options?.reelId && !options?.hasLocalMediaOrTranscript
+      ? await tryExternalMediaResolver(options.reelId, normalizedUrl)
+      : null;
+
+  // If the client device already supplied public metadata, skip hitting Meta from our server IP!
+  if (options?.existingCaption) {
+    return {
+      authorHandle: options.existingAuthorHandle ?? null,
+      caption: options.existingCaption,
+      thumbnailUrl: options.existingThumbnailUrl ?? null,
+      resolvedMediaFilePath,
+    };
+  }
+
+  // Check server-side shortcode cache
+  const cached = metadataCache.get(normalizedUrl);
+  if (cached && cached.expiresAt > Date.now()) {
+    return {
+      ...cached.value,
+      resolvedMediaFilePath,
+    };
+  }
+
+  let authorHandle: string | null = options?.existingAuthorHandle ?? null;
+  let caption: string | null = options?.existingCaption ?? null;
+  let thumbnailUrl: string | null = options?.existingThumbnailUrl ?? null;
+
+  // Official Meta Graph API oEmbed (safe & compliant, never uses user cookies)
+  if (ENV.FACEBOOK_APP_ACCESS_TOKEN) {
+    try {
+      const params = new URLSearchParams({
+        url: normalizedUrl,
+        access_token: ENV.FACEBOOK_APP_ACCESS_TOKEN,
+        omitscript: "true",
+      });
+
+      const response = await fetch(`${OEMBED_ENDPOINT}?${params.toString()}`);
+      if (response.ok) {
+        const data = (await response.json()) as {
+          html?: string;
+          author_name?: string;
+          thumbnail_url?: string;
+        };
+
+        if (data.author_name && !authorHandle) {
+          authorHandle = data.author_name;
+        }
+        if (data.thumbnail_url && !thumbnailUrl) {
+          thumbnailUrl = data.thumbnail_url;
+        }
+
+        const html = data.html ?? "";
+        const paragraphs = [...html.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/g)]
+          .map((m) => stripTags(m[1]))
+          .filter(Boolean);
+
+        const authorParagraph = paragraphs.find((p) =>
+          /^A post shared by/i.test(p)
+        );
+        if (!authorHandle && authorParagraph) {
+          authorHandle =
+            authorParagraph.match(/\(@([\w.]+)\)/)?.[1] ?? authorHandle;
+        }
+        caption =
+          paragraphs.find((p) => p !== authorParagraph) ?? caption ?? null;
+      }
+    } catch {
+      // Fall through gracefully
     }
   }
 
-  return { authorHandle, caption, thumbnailUrl: null };
+  // Cache non-empty metadata so duplicate saves never re-query
+  if (caption || authorHandle || thumbnailUrl) {
+    metadataCache.set(normalizedUrl, {
+      expiresAt: Date.now() + CACHE_TTL_MS,
+      value: { authorHandle, caption, thumbnailUrl },
+    });
+  }
+
+  return {
+    authorHandle,
+    caption,
+    thumbnailUrl,
+    resolvedMediaFilePath,
+  };
 }
