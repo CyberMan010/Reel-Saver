@@ -204,22 +204,45 @@ async function summarizeWithAnthropic(
     apiKey: ENV.ANTHROPIC_API_KEY || undefined,
   });
 
-  const message = await anthropic.messages.create({
-    model: ENV.ANTHROPIC_MODEL,
-    max_tokens: 1024,
-    messages: [{ role: "user", content: prompt }],
-  });
+  const modelCandidates = Array.from(
+    new Set([
+      ENV.ANTHROPIC_MODEL,
+      "claude-sonnet-4-20250514",
+      "claude-3-5-haiku-latest",
+    ])
+  );
 
-  const content = message.content.find((block) => block.type === "text");
-  if (!content || content.type !== "text") {
-    throw new Error("Claude returned no text content.");
+  let lastErr: unknown;
+  for (const model of modelCandidates) {
+    try {
+      const message = await anthropic.messages.create({
+        model,
+        max_tokens: 1024,
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      const content = message.content.find((block) => block.type === "text");
+      if (!content || content.type !== "text") {
+        throw new Error("Claude returned no text content.");
+      }
+
+      const parsed = aiAnalysisSchema.parse(parseAiJson(content.text));
+      return {
+        ...parsed,
+        category: normalizeCategoryChoice(parsed.category, allowedCategories),
+      };
+    } catch (err) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/not_found|404|model/i.test(msg)) {
+        throw err;
+      }
+    }
   }
 
-  const parsed = aiAnalysisSchema.parse(parseAiJson(content.text));
-  return {
-    ...parsed,
-    category: normalizeCategoryChoice(parsed.category, allowedCategories),
-  };
+  throw lastErr instanceof Error
+    ? lastErr
+    : new Error("Anthropic request failed.");
 }
 
 // ─── Provider 4: Local Ollama (100% free & offline) ──────────────────────────

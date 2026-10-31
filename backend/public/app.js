@@ -232,10 +232,12 @@
         : d.transcription.localWhisperInstalled
         ? "Local Faster-Whisper"
         : "Browser STT + Local Analyzer";
+      const dbLabel =
+        d.storageMode === "supabase" ? "Supabase Cloud" : "Local Disk DB";
       $("sysStatusTitle").textContent = d.ffmpegAvailable
-        ? "● FFmpeg MP4→MP3 Ready"
-        : "● Pipeline Active";
-      $("sysStatusDetails").textContent = `STT: ${sttLabel} · Safe Client-Edge IP Mode`;
+        ? `● FFmpeg Ready · ${dbLabel}`
+        : `● Pipeline Active · ${dbLabel}`;
+      $("sysStatusDetails").textContent = `STT: ${sttLabel} · No Docker Needed`;
     } catch {
       $("sysStatusDetails").textContent = "Connected to Reel-Saver API";
     }

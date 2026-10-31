@@ -2,10 +2,14 @@ import { Router } from "express";
 import authRoutes from "./auth.routes";
 import reelsRoutes from "./reels.routes";
 import categoriesRoutes from "./categories.routes";
-import { ENV, isSupabaseConfigured } from "../config/env";
+import { ENV } from "../config/env";
 import { isRedisQueueActive } from "../jobs/reels.queue";
 import { isFfmpegAvailable } from "../services/media.service";
 import { isLocalWhisperInstalled } from "../services/transcription.service";
+import {
+  getStorageStatusSummary,
+  probeSupabaseHealth,
+} from "../storage/storageManager";
 
 const router = Router();
 
@@ -22,6 +26,9 @@ router.get("/health", (_req, res) => {
 });
 
 router.get("/system/capabilities", async (_req, res) => {
+  await probeSupabaseHealth();
+  const storage = getStorageStatusSummary();
+
   const [ffmpegReady, localWhisperReady, redisActive] = await Promise.all([
     isFfmpegAvailable(),
     isLocalWhisperInstalled(),
@@ -31,7 +38,10 @@ router.get("/system/capabilities", async (_req, res) => {
   res.json({
     success: true,
     data: {
-      storageMode: isSupabaseConfigured() ? "supabase" : "local-json",
+      storageMode: storage.activeBackend,
+      storageConfiguredMode: storage.configuredMode,
+      storageFallbackReason: storage.fallbackReason,
+      whisperCacheDir: ENV.WHISPER_CACHE_DIR,
       queueMode: redisActive ? "bullmq-redis" : "in-process-async",
       ffmpegAvailable: ffmpegReady,
       transcription: {

@@ -1,6 +1,6 @@
-import { isSupabaseConfigured } from "../config/env";
 import { supabaseAdmin } from "../config/supabase";
 import { mutateLocalDb, readLocalDb } from "../storage/localStore";
+import { withStorageFallback } from "../storage/storageManager";
 import type { Reel, ReelStatus } from "../types/reel.types";
 
 const TABLE = "Reel";
@@ -94,127 +94,133 @@ export async function createReel(payload: {
     processedAt: null,
   };
 
-  if (!isSupabaseConfigured()) {
-    return mutateLocalDb((db) => {
-      db.reels.push(fullRecord);
-      return { ...fullRecord };
-    });
-  }
+  return withStorageFallback(
+    async () => {
+      const insertPayload: Record<string, unknown> = {
+        id: fullRecord.id,
+        userId: fullRecord.userId,
+        sourceUrl: fullRecord.sourceUrl,
+        title: fullRecord.title,
+        authorHandle: fullRecord.authorHandle,
+        caption: fullRecord.caption,
+        thumbnailUrl: fullRecord.thumbnailUrl,
+        transcript: fullRecord.transcript,
+        notes: fullRecord.notes,
+        audioUrl: fullRecord.audioUrl,
+        audioDurationSec: fullRecord.audioDurationSec,
+        transcriptionSource: fullRecord.transcriptionSource,
+        categoryId: fullRecord.categoryId,
+        status: "PENDING",
+        keyPoints: [],
+      };
 
-  const insertPayload: Record<string, unknown> = {
-    id: fullRecord.id,
-    userId: fullRecord.userId,
-    sourceUrl: fullRecord.sourceUrl,
-    title: fullRecord.title,
-    authorHandle: fullRecord.authorHandle,
-    caption: fullRecord.caption,
-    thumbnailUrl: fullRecord.thumbnailUrl,
-    transcript: fullRecord.transcript,
-    notes: fullRecord.notes,
-    audioUrl: fullRecord.audioUrl,
-    audioDurationSec: fullRecord.audioDurationSec,
-    transcriptionSource: fullRecord.transcriptionSource,
-    categoryId: fullRecord.categoryId,
-    status: "PENDING",
-    keyPoints: [],
-  };
-
-  const { data, error } = await supabaseAdmin
-    .from(TABLE)
-    .insert([insertPayload])
-    .select("*")
-    .single();
-
-  if (error) {
-    if (isMissingColumnOrEnumError(error.message)) {
-      const fallback = stripExtendedColumns(insertPayload);
-      const retry = await supabaseAdmin
+      const { data, error } = await supabaseAdmin
         .from(TABLE)
-        .insert([fallback])
+        .insert([insertPayload])
         .select("*")
         .single();
-      if (retry.error) throw new Error(retry.error.message);
-      return normalizeReelRow(retry.data as Record<string, unknown>);
-    }
-    throw new Error(error.message);
-  }
 
-  return normalizeReelRow(data as Record<string, unknown>);
+      if (error) {
+        if (isMissingColumnOrEnumError(error.message)) {
+          const fallback = stripExtendedColumns(insertPayload);
+          const retry = await supabaseAdmin
+            .from(TABLE)
+            .insert([fallback])
+            .select("*")
+            .single();
+          if (retry.error) throw new Error(retry.error.message);
+          return normalizeReelRow(retry.data as Record<string, unknown>);
+        }
+        throw new Error(error.message);
+      }
+
+      return normalizeReelRow(data as Record<string, unknown>);
+    },
+    () =>
+      mutateLocalDb((db) => {
+        db.reels.push(fullRecord);
+        return { ...fullRecord };
+      })
+  );
 }
 
 export async function findReelById(
   id: string,
   userId: string
 ): Promise<Reel | null> {
-  if (!isSupabaseConfigured()) {
-    const db = readLocalDb();
-    const found = db.reels.find((r) => r.id === id && r.userId === userId);
-    return found ? { ...found, keyPoints: [...found.keyPoints] } : null;
-  }
+  return withStorageFallback(
+    async () => {
+      const { data, error } = await supabaseAdmin
+        .from(TABLE)
+        .select("*")
+        .eq("id", id)
+        .eq("userId", userId)
+        .maybeSingle();
 
-  const { data, error } = await supabaseAdmin
-    .from(TABLE)
-    .select("*")
-    .eq("id", id)
-    .eq("userId", userId)
-    .maybeSingle();
-
-  if (error) throw new Error(error.message);
-  return data ? normalizeReelRow(data as Record<string, unknown>) : null;
+      if (error) throw new Error(error.message);
+      return data ? normalizeReelRow(data as Record<string, unknown>) : null;
+    },
+    () => {
+      const db = readLocalDb();
+      const found = db.reels.find((r) => r.id === id && r.userId === userId);
+      return found ? { ...found, keyPoints: [...found.keyPoints] } : null;
+    }
+  );
 }
 
-/**
- * Internal worker lookup — no userId scoping. Never expose via HTTP routes.
- */
 export async function findReelByIdUnscoped(id: string): Promise<Reel | null> {
-  if (!isSupabaseConfigured()) {
-    const db = readLocalDb();
-    const found = db.reels.find((r) => r.id === id);
-    return found ? { ...found, keyPoints: [...found.keyPoints] } : null;
-  }
+  return withStorageFallback(
+    async () => {
+      const { data, error } = await supabaseAdmin
+        .from(TABLE)
+        .select("*")
+        .eq("id", id)
+        .maybeSingle();
 
-  const { data, error } = await supabaseAdmin
-    .from(TABLE)
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
-
-  if (error) throw new Error(error.message);
-  return data ? normalizeReelRow(data as Record<string, unknown>) : null;
+      if (error) throw new Error(error.message);
+      return data ? normalizeReelRow(data as Record<string, unknown>) : null;
+    },
+    () => {
+      const db = readLocalDb();
+      const found = db.reels.find((r) => r.id === id);
+      return found ? { ...found, keyPoints: [...found.keyPoints] } : null;
+    }
+  );
 }
 
 export async function listReelsByUser(
   userId: string,
   filters?: { status?: ReelStatus; categoryId?: string; search?: string }
 ): Promise<Reel[]> {
-  let rows: Reel[];
+  let rows = await withStorageFallback(
+    async () => {
+      let query = supabaseAdmin.from(TABLE).select("*").eq("userId", userId);
 
-  if (!isSupabaseConfigured()) {
-    const db = readLocalDb();
-    rows = db.reels
-      .filter((r) => r.userId === userId)
-      .filter((r) => (!filters?.status ? true : r.status === filters.status))
-      .filter((r) =>
-        !filters?.categoryId ? true : r.categoryId === filters.categoryId
-      )
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .map((r) => ({ ...r, keyPoints: [...r.keyPoints] }));
-  } else {
-    let query = supabaseAdmin.from(TABLE).select("*").eq("userId", userId);
+      if (filters?.status) {
+        query = query.eq("status", filters.status);
+      }
+      if (filters?.categoryId) {
+        query = query.eq("categoryId", filters.categoryId);
+      }
 
-    if (filters?.status) {
-      query = query.eq("status", filters.status);
+      const { data, error } = await query.order("createdAt", {
+        ascending: false,
+      });
+      if (error) throw new Error(error.message);
+      return ((data ?? []) as Record<string, unknown>[]).map(normalizeReelRow);
+    },
+    () => {
+      const db = readLocalDb();
+      return db.reels
+        .filter((r) => r.userId === userId)
+        .filter((r) => (!filters?.status ? true : r.status === filters.status))
+        .filter((r) =>
+          !filters?.categoryId ? true : r.categoryId === filters.categoryId
+        )
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .map((r) => ({ ...r, keyPoints: [...r.keyPoints] }));
     }
-    if (filters?.categoryId) {
-      query = query.eq("categoryId", filters.categoryId);
-    }
-
-    const { data, error } = await query.order("createdAt", {
-      ascending: false,
-    });
-    if (error) throw new Error(error.message);
-    rows = ((data ?? []) as Record<string, unknown>[]).map(normalizeReelRow);
-  }
+  );
 
   if (filters?.search && filters.search.trim()) {
     const q = filters.search.trim().toLowerCase();
@@ -276,24 +282,26 @@ export async function updateReelStatus(
   status: ReelStatus,
   errorMessage?: string | null
 ): Promise<void> {
-  if (!isSupabaseConfigured()) {
-    mutateLocalDb((db) => {
-      const reel = db.reels.find((r) => r.id === id);
-      if (reel) {
-        reel.status = status;
-        if (errorMessage !== undefined) {
-          reel.errorMessage = errorMessage;
-        }
+  await withStorageFallback(
+    async () => {
+      const updates: Record<string, unknown> = { status };
+      if (errorMessage !== undefined) {
+        updates.errorMessage = errorMessage;
       }
-    });
-    return;
-  }
-
-  const updates: Record<string, unknown> = { status };
-  if (errorMessage !== undefined) {
-    updates.errorMessage = errorMessage;
-  }
-  await applySupabaseReelUpdate(id, updates);
+      await applySupabaseReelUpdate(id, updates);
+    },
+    () => {
+      mutateLocalDb((db) => {
+        const reel = db.reels.find((r) => r.id === id);
+        if (reel) {
+          reel.status = status;
+          if (errorMessage !== undefined) {
+            reel.errorMessage = errorMessage;
+          }
+        }
+      });
+    }
+  );
 }
 
 export async function updateReelExtraction(
@@ -309,27 +317,30 @@ export async function updateReelExtraction(
     transcriptionSource?: string | null;
   }
 ): Promise<void> {
-  if (!isSupabaseConfigured()) {
-    mutateLocalDb((db) => {
-      const reel = db.reels.find((r) => r.id === id);
-      if (!reel) return;
-      if (fields.title !== undefined) reel.title = fields.title;
-      if (fields.authorHandle !== undefined)
-        reel.authorHandle = fields.authorHandle;
-      if (fields.caption !== undefined) reel.caption = fields.caption;
-      if (fields.thumbnailUrl !== undefined)
-        reel.thumbnailUrl = fields.thumbnailUrl;
-      if (fields.transcript !== undefined) reel.transcript = fields.transcript;
-      if (fields.audioUrl !== undefined) reel.audioUrl = fields.audioUrl;
-      if (fields.audioDurationSec !== undefined)
-        reel.audioDurationSec = fields.audioDurationSec;
-      if (fields.transcriptionSource !== undefined)
-        reel.transcriptionSource = fields.transcriptionSource;
-    });
-    return;
-  }
-
-  await applySupabaseReelUpdate(id, fields as Record<string, unknown>);
+  await withStorageFallback(
+    async () => {
+      await applySupabaseReelUpdate(id, fields as Record<string, unknown>);
+    },
+    () => {
+      mutateLocalDb((db) => {
+        const reel = db.reels.find((r) => r.id === id);
+        if (!reel) return;
+        if (fields.title !== undefined) reel.title = fields.title;
+        if (fields.authorHandle !== undefined)
+          reel.authorHandle = fields.authorHandle;
+        if (fields.caption !== undefined) reel.caption = fields.caption;
+        if (fields.thumbnailUrl !== undefined)
+          reel.thumbnailUrl = fields.thumbnailUrl;
+        if (fields.transcript !== undefined)
+          reel.transcript = fields.transcript;
+        if (fields.audioUrl !== undefined) reel.audioUrl = fields.audioUrl;
+        if (fields.audioDurationSec !== undefined)
+          reel.audioDurationSec = fields.audioDurationSec;
+        if (fields.transcriptionSource !== undefined)
+          reel.transcriptionSource = fields.transcriptionSource;
+      });
+    }
+  );
 }
 
 export async function updateReelSummary(
@@ -342,28 +353,30 @@ export async function updateReelSummary(
     processedAt: string;
   }
 ): Promise<void> {
-  if (!isSupabaseConfigured()) {
-    mutateLocalDb((db) => {
-      const reel = db.reels.find((r) => r.id === id);
-      if (!reel) return;
-      if (fields.title !== undefined && !reel.title) {
-        reel.title = fields.title;
-      }
-      reel.summary = fields.summary;
-      reel.keyPoints = [...fields.keyPoints];
-      reel.categoryId = fields.categoryId;
-      reel.processedAt = fields.processedAt;
-      reel.status = "DONE";
-      reel.errorMessage = null;
-    });
-    return;
-  }
-
-  await applySupabaseReelUpdate(id, {
-    ...fields,
-    status: "DONE",
-    errorMessage: null,
-  });
+  await withStorageFallback(
+    async () => {
+      await applySupabaseReelUpdate(id, {
+        ...fields,
+        status: "DONE",
+        errorMessage: null,
+      });
+    },
+    () => {
+      mutateLocalDb((db) => {
+        const reel = db.reels.find((r) => r.id === id);
+        if (!reel) return;
+        if (fields.title !== undefined && !reel.title) {
+          reel.title = fields.title;
+        }
+        reel.summary = fields.summary;
+        reel.keyPoints = [...fields.keyPoints];
+        reel.categoryId = fields.categoryId;
+        reel.processedAt = fields.processedAt;
+        reel.status = "DONE";
+        reel.errorMessage = null;
+      });
+    }
+  );
 }
 
 export async function updateReelFields(
@@ -386,39 +399,43 @@ export async function updateReelFields(
     >
   >
 ): Promise<Reel> {
-  if (!isSupabaseConfigured()) {
-    return mutateLocalDb((db) => {
-      const reel = db.reels.find((r) => r.id === id);
-      if (!reel) {
-        throw Object.assign(new Error("Reel not found."), { statusCode: 404 });
-      }
-      Object.assign(reel, fields);
-      if (fields.keyPoints) {
-        reel.keyPoints = [...fields.keyPoints];
-      }
-      return { ...reel, keyPoints: [...reel.keyPoints] };
-    });
-  }
-
-  return applySupabaseReelUpdate(id, fields as Record<string, unknown>);
+  return withStorageFallback(
+    async () => applySupabaseReelUpdate(id, fields as Record<string, unknown>),
+    () =>
+      mutateLocalDb((db) => {
+        const reel = db.reels.find((r) => r.id === id);
+        if (!reel) {
+          throw Object.assign(new Error("Reel not found."), {
+            statusCode: 404,
+          });
+        }
+        Object.assign(reel, fields);
+        if (fields.keyPoints) {
+          reel.keyPoints = [...fields.keyPoints];
+        }
+        return { ...reel, keyPoints: [...reel.keyPoints] };
+      })
+  );
 }
 
 export async function markReelFailed(
   id: string,
   errorMessage: string
 ): Promise<void> {
-  if (!isSupabaseConfigured()) {
-    mutateLocalDb((db) => {
-      const reel = db.reels.find((r) => r.id === id);
-      if (reel) {
-        reel.status = "FAILED";
-        reel.errorMessage = errorMessage;
-      }
-    });
-    return;
-  }
-
-  await applySupabaseReelUpdate(id, { status: "FAILED", errorMessage });
+  await withStorageFallback(
+    async () => {
+      await applySupabaseReelUpdate(id, { status: "FAILED", errorMessage });
+    },
+    () => {
+      mutateLocalDb((db) => {
+        const reel = db.reels.find((r) => r.id === id);
+        if (reel) {
+          reel.status = "FAILED";
+          reel.errorMessage = errorMessage;
+        }
+      });
+    }
+  );
 }
 
 export async function updateReelCategory(
@@ -429,18 +446,22 @@ export async function updateReelCategory(
 }
 
 export async function deleteReel(id: string, userId: string): Promise<void> {
-  if (!isSupabaseConfigured()) {
-    mutateLocalDb((db) => {
-      db.reels = db.reels.filter((r) => !(r.id === id && r.userId === userId));
-    });
-    return;
-  }
+  await withStorageFallback(
+    async () => {
+      const { error } = await supabaseAdmin
+        .from(TABLE)
+        .delete()
+        .eq("id", id)
+        .eq("userId", userId);
 
-  const { error } = await supabaseAdmin
-    .from(TABLE)
-    .delete()
-    .eq("id", id)
-    .eq("userId", userId);
-
-  if (error) throw new Error(error.message);
+      if (error) throw new Error(error.message);
+    },
+    () => {
+      mutateLocalDb((db) => {
+        db.reels = db.reels.filter(
+          (r) => !(r.id === id && r.userId === userId)
+        );
+      });
+    }
+  );
 }
