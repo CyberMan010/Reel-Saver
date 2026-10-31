@@ -38,11 +38,34 @@ async function run() {
   console.log(`[E2E] Server listening at ${baseUrl}`);
 
   try {
-    // 1. Verify system capabilities
+    // 1. Verify system capabilities & public HTML/Unicode extraction parsers
+    const {
+      decodeHtmlEntities,
+      extractMetaTagContent,
+      parseCaptionFromOgDescription,
+      parseAuthorFromOgDescription,
+    } = await import("../services/extraction.service");
+
+    assert.strictEqual(
+      decodeHtmlEntities("&#x648;&#x635;&#x641;&#x629; &amp; &#1583;&#1580;&#1575;&#1580;"),
+      "وصفة & دجاج"
+    );
+    const mockHtml = `<meta content="12K likes, 45 comments - chef.amman on October 15, 2026: &quot;&#x648;&#x635;&#x641;&#x629; High-protein chicken shawarma bowl!&quot;." property="og:description" />`;
+    const extractedOg = extractMetaTagContent(mockHtml, ["og:description"]);
+    assert.ok(extractedOg);
+    assert.strictEqual(parseAuthorFromOgDescription(extractedOg), "chef.amman");
+    assert.strictEqual(
+      parseCaptionFromOgDescription(extractedOg),
+      "وصفة High-protein chicken shawarma bowl!"
+    );
+
     const capRes = await fetch(`${baseUrl}/api/system/capabilities`);
     const capJson = (await capRes.json()) as {
       success: boolean;
-      data: { ffmpegAvailable: boolean };
+      data: {
+        ffmpegAvailable: boolean;
+        transcription: { nodeWhisperAvailable: boolean };
+      };
     };
     assert.strictEqual(capJson.success, true);
     assert.strictEqual(
@@ -50,7 +73,14 @@ async function run() {
       true,
       "FFmpeg should be available"
     );
-    console.log("[E2E] 1/6 System capabilities verified (FFmpeg ready).");
+    assert.strictEqual(
+      capJson.data.transcription.nodeWhisperAvailable,
+      true,
+      "Built-in Node.js Whisper (@xenova/transformers) should be available"
+    );
+    console.log(
+      "[E2E] 1/6 System capabilities (FFmpeg + Built-In Node Whisper) & Unicode embed parser verified."
+    );
 
     // 2. Register & Login user (even with unreachable SUPABASE_URL in .env!)
     const testEmail = `tester-${Date.now()}@example.com`;

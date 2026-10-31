@@ -70,8 +70,16 @@ app.use("/uploads", express.static(ENV.UPLOADS_DIR));
 const publicDir = path.resolve(__dirname, "public");
 app.use(express.static(publicDir));
 
-// ─── API Rate Limiting & Routes ───────────────────────────────────────────
-app.use("/api", generalRateLimiter, apiRoutes);
+// ─── API Rate Limiting & Routes (disable ETag/caching so live polling is fresh) ─
+app.use(
+  "/api",
+  (_req, res, next) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    next();
+  },
+  generalRateLimiter,
+  apiRoutes
+);
 
 // ─── SPA Fallback for Web Companion App ───────────────────────────────────
 app.get("/{*splat}", (req, res, next) => {

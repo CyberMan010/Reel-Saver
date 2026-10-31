@@ -133,11 +133,14 @@
             </div>
           </div>
           <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px;">
-            <button id="generateSampleAudioBtn" class="btn btn-secondary btn-sm" type="button">
-              Generate Test Audio Clip (.wav → FFmpeg .mp3)
+            <button id="recordAudioBtn" class="btn btn-secondary btn-sm" type="button">
+              🔴 Record Voice / Reel Audio (→ Local Whisper)
             </button>
             <button id="dictateSpeechBtn" class="btn btn-secondary btn-sm" type="button">
               🎙 Free Browser Voice Dictation
+            </button>
+            <button id="generateSampleAudioBtn" class="btn btn-secondary btn-sm" type="button">
+              Test FFmpeg Clip + Sample Caption
             </button>
           </div>
         </div>
@@ -232,6 +235,7 @@
         <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin-top:18px;padding-top:14px;border-top:1px solid var(--border);">
           <div style="display:flex;flex-wrap:wrap;gap:8px;">
             <button id="deleteReelBtn" class="btn btn-danger btn-sm" type="button">Delete</button>
+            <button id="retryExtractionBtn" class="btn btn-secondary btn-sm" type="button">⚡ Retry Extract &amp; Whisper</button>
             <button id="resummarizeBtn" class="btn btn-secondary btn-sm" type="button">↻ Re-Summarize Transcript</button>
             <label class="btn btn-secondary btn-sm" style="cursor:pointer;">
               📎 Attach MP4/MP3

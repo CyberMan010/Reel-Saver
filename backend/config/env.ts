@@ -94,14 +94,16 @@ export const ENV = {
   EXTERNAL_MEDIA_RESOLVER_URL: getEnv("EXTERNAL_MEDIA_RESOLVER_URL"),
   EXTERNAL_MEDIA_RESOLVER_KEY: getEnv("EXTERNAL_MEDIA_RESOLVER_KEY"),
 
-  // FFmpeg & Local Whisper (100% Free, No Credit Card)
+  // FFmpeg & Local Whisper (100% Free, No Credit Card, Built-In Node ONNX + Optional Python)
   FFMPEG_PATH: getEnv("FFMPEG_PATH"),
   PYTHON_BIN: getEnv("PYTHON_BIN", ""),
   WHISPER_MODEL_SIZE: getEnv("WHISPER_MODEL_SIZE", "base"),
+  WHISPER_LANGUAGE: getEnv("WHISPER_LANGUAGE", ""),
 
-  // Transcription provider: "auto" | "local-whisper" | "groq" | "gemini"
+  // Transcription provider: "auto" | "node-whisper" | "local-whisper" | "groq" | "gemini"
   TRANSCRIPTION_PROVIDER: getEnv("TRANSCRIPTION_PROVIDER", "auto") as
     | "auto"
+    | "node-whisper"
     | "local-whisper"
     | "groq"
     | "gemini",
