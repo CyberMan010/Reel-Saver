@@ -5,7 +5,11 @@ import categoriesRoutes from "./categories.routes";
 import { ENV } from "../config/env";
 import { isRedisQueueActive } from "../jobs/reels.queue";
 import { isFfmpegAvailable } from "../services/media.service";
-import { isLocalWhisperInstalled } from "../services/transcription.service";
+import {
+  isLocalWhisperInstalled,
+  isNodeWhisperAvailable,
+  isPythonWhisperInstalled,
+} from "../services/transcription.service";
 import {
   getStorageStatusSummary,
   probeSupabaseHealth,
@@ -29,11 +33,13 @@ router.get("/system/capabilities", async (_req, res) => {
   await probeSupabaseHealth();
   const storage = getStorageStatusSummary();
 
-  const [ffmpegReady, localWhisperReady, redisActive] = await Promise.all([
-    isFfmpegAvailable(),
-    isLocalWhisperInstalled(),
-    isRedisQueueActive(),
-  ]);
+  const [ffmpegReady, localWhisperReady, pythonWhisperReady, redisActive] =
+    await Promise.all([
+      isFfmpegAvailable(),
+      isLocalWhisperInstalled(),
+      isPythonWhisperInstalled(),
+      isRedisQueueActive(),
+    ]);
 
   res.json({
     success: true,
@@ -48,6 +54,8 @@ router.get("/system/capabilities", async (_req, res) => {
         preferred: ENV.TRANSCRIPTION_PROVIDER,
         groqWhisperConfigured: Boolean(ENV.GROQ_API_KEY),
         geminiAudioConfigured: Boolean(ENV.GEMINI_API_KEY),
+        nodeWhisperAvailable: isNodeWhisperAvailable(),
+        pythonWhisperInstalled: pythonWhisperReady,
         localWhisperInstalled: localWhisperReady,
         clientSpeechSupported: true,
       },

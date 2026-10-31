@@ -160,13 +160,19 @@ export async function processReel(
     // ─── Stage 1: Metadata & Media Extraction (MP4 -> MP3) ──────────────────
     await reelRepo.updateReelStatus(reelId, "EXTRACTING", null);
 
+    const hasRealExistingTranscript = Boolean(
+      reel.transcript &&
+        reel.transcriptionSource !== "none" &&
+        reel.transcriptionSource !== "caption-inferred"
+    );
+
     const extracted = await extractReelContent(reel.sourceUrl, {
       reelId,
       existingAuthorHandle: reel.authorHandle,
       existingCaption: reel.caption,
       existingThumbnailUrl: reel.thumbnailUrl,
       hasLocalMediaOrTranscript: Boolean(
-        options?.uploadedFilePath || reel.audioUrl || reel.transcript
+        options?.uploadedFilePath || reel.audioUrl || hasRealExistingTranscript
       ),
     });
 
@@ -206,8 +212,10 @@ export async function processReel(
     });
 
     // ─── Stage 2: Audio Transcription (Card-Free Whisper / STT) ─────────────
-    let spokenTranscript = reel.transcript;
-    let transcriptionSource = reel.transcriptionSource;
+    let spokenTranscript = hasRealExistingTranscript ? reel.transcript : null;
+    let transcriptionSource = hasRealExistingTranscript
+      ? reel.transcriptionSource
+      : null;
 
     if (!spokenTranscript && audioDiskPath && ENV.ENABLE_VIDEO_TRANSCRIPTION) {
       await reelRepo.updateReelStatus(reelId, "TRANSCRIBING", null);
@@ -459,6 +467,19 @@ export async function retryReelForUser(
   if (!reel) {
     throw Object.assign(new Error("Reel not found."), { statusCode: 404 });
   }
+
+  const isPlaceholderTitle =
+    !reel.title || /^Saved (?:Instagram )?Reel/i.test(reel.title);
+  const isPlaceholderTranscript =
+    reel.transcriptionSource === "none" ||
+    reel.transcriptionSource === "caption-inferred";
+
+  await reelRepo.updateReelExtraction(reelId, {
+    ...(isPlaceholderTitle ? { title: null } : {}),
+    ...(isPlaceholderTranscript
+      ? { transcript: null, transcriptionSource: null }
+      : {}),
+  });
 
   await reelRepo.updateReelStatus(reelId, "PENDING", null);
   await enqueueReelProcessing(reelId);

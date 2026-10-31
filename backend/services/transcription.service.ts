@@ -2,14 +2,26 @@ import { execFile } from "child_process";
 import fs from "fs";
 import path from "path";
 import { promisify } from "util";
+import { WaveFile } from "wavefile";
 import { ENV } from "../config/env";
+import { resolveFfmpegPath } from "./media.service";
 
 const execFileAsync = promisify(execFile);
+
+// Preserves native ESM `import()` even when compiled to CommonJS (`tsc`)
+const dynamicEsmImport = new Function(
+  "specifier",
+  "return import(specifier)"
+) as (specifier: string) => Promise<Record<string, unknown>>;
 
 export interface TranscriptionResult {
   transcript: string;
   language?: string | null;
-  provider: "groq-whisper" | "gemini-audio" | "local-whisper";
+  provider:
+    | "groq-whisper"
+    | "gemini-audio"
+    | "node-whisper"
+    | "local-whisper";
 }
 
 interface PythonCommand {
@@ -18,11 +30,23 @@ interface PythonCommand {
 }
 
 let cachedPythonCmd: PythonCommand | null | undefined;
+let cachedNodeTranscriberPromise: Promise<
+  (audio: Float32Array, options?: Record<string, unknown>) => Promise<{ text?: string }>
+> | null = null;
+let cachedNodeModelId: string | null = null;
 
-/**
- * Resolves a real Python 3 interpreter across Windows (`python`, `py -3`)
- * and Linux/macOS (`python3`, `python`), avoiding the Windows Store stub.
- */
+export function isNodeWhisperAvailable(): boolean {
+  try {
+    const pkgPath = path.resolve(
+      process.cwd(),
+      "node_modules/@xenova/transformers/package.json"
+    );
+    return fs.existsSync(pkgPath);
+  } catch {
+    return false;
+  }
+}
+
 async function resolvePythonCommand(): Promise<PythonCommand | null> {
   if (cachedPythonCmd !== undefined) {
     return cachedPythonCmd;
@@ -65,10 +89,6 @@ async function resolvePythonCommand(): Promise<PythonCommand | null> {
   return null;
 }
 
-/**
- * Builds child-process environment variables keeping all Whisper/HuggingFace
- * model caches and temporary files on the repo drive (e.g. E:\...) instead of C:\.
- */
 function buildDiskSafePythonEnv(): NodeJS.ProcessEnv {
   const cacheDir = ENV.WHISPER_CACHE_DIR;
   const tmpDir = path.join(ENV.UPLOADS_DIR, "tmp");
@@ -89,6 +109,13 @@ function buildDiskSafePythonEnv(): NodeJS.ProcessEnv {
 }
 
 export async function isLocalWhisperInstalled(): Promise<boolean> {
+  if (isNodeWhisperAvailable()) {
+    return true;
+  }
+  return isPythonWhisperInstalled();
+}
+
+export async function isPythonWhisperInstalled(): Promise<boolean> {
   const py = await resolvePythonCommand();
   if (!py) return false;
 
@@ -106,6 +133,155 @@ export async function isLocalWhisperInstalled(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Decodes an MP3/audio file into 16kHz mono Float32 PCM samples via FFmpeg + wavefile.
+ */
+async function decodeAudioToFloat32Samples(
+  audioFilePath: string
+): Promise<Float32Array> {
+  const ffmpegBin = resolveFfmpegPath();
+  if (!ffmpegBin) {
+    throw new Error("FFmpeg binary is required to decode audio samples.");
+  }
+
+  const { stdout } = await execFileAsync(
+    ffmpegBin,
+    [
+      "-nostdin",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-i",
+      audioFilePath,
+      "-ar",
+      "16000",
+      "-ac",
+      "1",
+      "-f",
+      "wav",
+      "pipe:1",
+    ],
+    {
+      encoding: "buffer",
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: 60000,
+    }
+  );
+
+  const wav = new WaveFile(stdout);
+  wav.toBitDepth("32f");
+  const rawSamples = wav.getSamples();
+  const mono = Array.isArray(rawSamples) ? rawSamples[0] : rawSamples;
+  return mono instanceof Float32Array ? mono : new Float32Array(mono);
+}
+
+function cleanWhisperArtifactTokens(raw: string): string {
+  const cleaned = raw
+    .replace(/\[(?:BLANK_AUDIO|MUSIC|SILENCE|APPLAUSE|LAUGHTER)\]/gi, "")
+    .replace(/\((?:music|silence|applause|laughter|inaudible|bell|beep|tone)\)/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return cleaned;
+}
+
+/**
+ * Built-in Pure Node.js OpenAI Whisper via `@xenova/transformers` (ONNX WebAssembly).
+ * - Zero Python required, zero Docker required, zero credit card, zero API keys.
+ * - Stores model weights (~140MB for `whisper-base`) inside `ENV.WHISPER_CACHE_DIR`
+ *   on the repo drive (e.g. `E:\...\backend\data\whisper-models`) so `C:\` is untouched.
+ */
+async function transcribeWithNodeWhisper(
+  mp3FilePath: string
+): Promise<TranscriptionResult> {
+  fs.mkdirSync(ENV.WHISPER_CACHE_DIR, { recursive: true });
+
+  const samples = await decodeAudioToFloat32Samples(mp3FilePath);
+  if (samples.length < 1600) {
+    return { transcript: "", provider: "node-whisper" };
+  }
+
+  // Check RMS energy so pure digital silence returns immediately
+  let energySum = 0;
+  for (let i = 0; i < samples.length; i++) {
+    energySum += samples[i] * samples[i];
+  }
+  const rms = Math.sqrt(energySum / samples.length);
+  if (rms < 0.0005) {
+    return { transcript: "", provider: "node-whisper" };
+  }
+
+  const size = ENV.WHISPER_MODEL_SIZE || "base";
+  const modelId = size.includes("/") ? size : `Xenova/whisper-${size}`;
+
+  if (!cachedNodeTranscriberPromise || cachedNodeModelId !== modelId) {
+    cachedNodeModelId = modelId;
+    cachedNodeTranscriberPromise = (async () => {
+      const transformers = await dynamicEsmImport("@xenova/transformers");
+      const tfEnv = transformers.env as {
+        cacheDir?: string;
+        allowLocalModels?: boolean;
+      };
+      tfEnv.cacheDir = ENV.WHISPER_CACHE_DIR;
+      tfEnv.allowLocalModels = true;
+
+      if (ENV.NODE_ENV !== "test") {
+        console.log(
+          `[Whisper] Loading local Node.js model "${modelId}" (cache: ${ENV.WHISPER_CACHE_DIR})...`
+        );
+      }
+
+      const pipelineFn = transformers.pipeline as (
+        task: string,
+        model: string,
+        opts?: Record<string, unknown>
+      ) => Promise<
+        (
+          audio: Float32Array,
+          options?: Record<string, unknown>
+        ) => Promise<{ text?: string }>
+      >;
+
+      return await pipelineFn("automatic-speech-recognition", modelId, {
+        quantized: true,
+      });
+    })();
+  }
+
+  let transcriber;
+  try {
+    transcriber = await cachedNodeTranscriberPromise;
+  } catch (err) {
+    cachedNodeTranscriberPromise = null;
+    throw err;
+  }
+
+  const startMs = Date.now();
+  const options: Record<string, unknown> = {
+    chunk_length_s: 30,
+    stride_length_s: 5,
+  };
+  if (ENV.WHISPER_LANGUAGE) {
+    options.language = ENV.WHISPER_LANGUAGE;
+    options.task = "transcribe";
+  }
+
+  const result = await transcriber(samples, options);
+  const transcript = cleanWhisperArtifactTokens(result?.text ?? "");
+
+  if (ENV.NODE_ENV !== "test") {
+    const elapsedSec = ((Date.now() - startMs) / 1000).toFixed(1);
+    console.log(
+      `[Whisper] Node.js Whisper finished in ${elapsedSec}s (${transcript.length} chars).`
+    );
+  }
+
+  return {
+    transcript,
+    provider: "node-whisper",
+  };
 }
 
 async function transcribeWithGroq(
@@ -208,14 +384,12 @@ async function transcribeWithGemini(
   };
 }
 
-async function transcribeWithLocalWhisper(
+async function transcribeWithPythonWhisper(
   mp3FilePath: string
 ): Promise<TranscriptionResult> {
   const py = await resolvePythonCommand();
   if (!py) {
-    throw new Error(
-      "Python 3 was not found on PATH. Install Python 3 or set GROQ_API_KEY / GEMINI_API_KEY."
-    );
+    throw new Error("Python 3 was not found on PATH.");
   }
 
   const scriptCandidates = [
@@ -249,6 +423,13 @@ async function transcribeWithLocalWhisper(
   };
 }
 
+/**
+ * Cascades automatically across zero-credit-card speech-to-text providers:
+ * 1. Groq Free Cloud Whisper (if GROQ_API_KEY configured)
+ * 2. Gemini Free Audio (if GEMINI_API_KEY configured)
+ * 3. Built-in Pure Node.js Whisper (`@xenova/transformers` — zero Python/keys needed!)
+ * 4. Optional Python `faster-whisper` fallback
+ */
 export async function transcribeAudioFile(
   mp3FilePath: string
 ): Promise<TranscriptionResult | null> {
@@ -265,10 +446,17 @@ export async function transcribeAudioFile(
   if (preferred === "gemini") {
     return transcribeWithGemini(mp3FilePath);
   }
+  if (preferred === "node-whisper") {
+    return transcribeWithNodeWhisper(mp3FilePath);
+  }
   if (preferred === "local-whisper") {
-    return transcribeWithLocalWhisper(mp3FilePath);
+    if (await isPythonWhisperInstalled()) {
+      return transcribeWithPythonWhisper(mp3FilePath);
+    }
+    return transcribeWithNodeWhisper(mp3FilePath);
   }
 
+  // "auto" cascade
   if (ENV.GROQ_API_KEY) {
     try {
       return await transcribeWithGroq(mp3FilePath);
@@ -285,19 +473,32 @@ export async function transcribeAudioFile(
     }
   }
 
-  if (await isLocalWhisperInstalled()) {
+  // Built-in pure Node.js Whisper (works out of the box with `npm install`!)
+  if (isNodeWhisperAvailable() && ENV.NODE_ENV !== "test") {
     try {
-      return await transcribeWithLocalWhisper(mp3FilePath);
+      const nodeRes = await transcribeWithNodeWhisper(mp3FilePath);
+      if (nodeRes.transcript) {
+        return nodeRes;
+      }
     } catch (err) {
       errors.push(err instanceof Error ? err.message : String(err));
     }
   }
 
-  if (errors.length > 0) {
+  // Optional Python faster-whisper fallback
+  if (await isPythonWhisperInstalled()) {
+    try {
+      return await transcribeWithPythonWhisper(mp3FilePath);
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  if (errors.length > 0 && ENV.NODE_ENV !== "test") {
     console.warn(
-      `[Transcription] Audio transcription providers failed (${errors.join(
+      `[Transcription] Audio transcription attempts encountered errors (${errors.join(
         " | "
-      )}); falling back to metadata/caption context.`
+      )}).`
     );
   }
 

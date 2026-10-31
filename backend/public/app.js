@@ -14,6 +14,8 @@
   let pollInterval = null;
   let speechRecognizer = null;
   let isDictating = false;
+  let mediaRecorder = null;
+  let recordedChunks = [];
 
   const $ = (id) => document.getElementById(id);
 
@@ -229,6 +231,8 @@
         ? "Groq Free Whisper"
         : d.transcription.geminiAudioConfigured
         ? "Gemini Free Audio"
+        : d.transcription.nodeWhisperAvailable
+        ? "Built-In Node Whisper"
         : d.transcription.localWhisperInstalled
         ? "Local Faster-Whisper"
         : "Browser STT + Local Analyzer";
@@ -423,11 +427,19 @@
           reel.title ||
           (reel.authorHandle ? `Reel by @${reel.authorHandle}` : "Processing Reel...");
         const catName = reel.category?.name || "Uncategorized";
+        const processingHint =
+          reel.status === "TRANSCRIBING"
+            ? "Transcribing speech with Local Whisper AI (first run downloads ~140MB model to data/whisper-models)..."
+            : reel.status === "EXTRACTING"
+            ? "Fetching Reel embed metadata & converting media to 16kHz MP3..."
+            : reel.status === "SUMMARIZING"
+            ? "Generating AI summary, key points & category..."
+            : "Queued for processing...";
         const summary =
           reel.summary ||
           (reel.status === "FAILED"
             ? reel.errorMessage || "Processing failed."
-            : "Extracting audio, transcribing, and summarizing...");
+            : processingHint);
         const points = (reel.keyPoints || []).slice(0, 3);
         const audioTag = reel.audioUrl
           ? `<span>🎵 MP3 (${reel.audioDurationSec ? `${reel.audioDurationSec}s` : "ready"})</span>`
@@ -560,6 +572,47 @@
       $("reelAuthor").value = "@focus.builder";
     }
     showToast("Generated 3s test clip + caption! Click 'Process & Summarize Reel' to test FFmpeg → MP3.");
+  });
+
+  // Record real microphone / speaker audio as WebM -> converted to MP3 by FFmpeg -> transcribed by built-in Node Whisper!
+  $("recordAudioBtn").addEventListener("click", async () => {
+    const btn = $("recordAudioBtn");
+    if (mediaRecorder && mediaRecorder.state === "recording") {
+      mediaRecorder.stop();
+      return;
+    }
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showToast("Microphone recording requires HTTPS or localhost in a modern browser.");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recordedChunks = [];
+      mediaRecorder = new MediaRecorder(stream);
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(recordedChunks, { type: "audio/webm" });
+        const file = new File([blob], `recorded-reel-${Date.now()}.webm`, {
+          type: "audio/webm",
+        });
+        setChosenMediaFile(file);
+        btn.textContent = "🔴 Record Voice / Reel Audio (→ Local Whisper)";
+        showToast("Audio recorded! Click 'Process & Summarize Reel' to transcribe with Local Whisper.");
+      };
+
+      mediaRecorder.start();
+      btn.textContent = "⏹ Stop Recording";
+      showToast("Recording... speak or play the Reel near your microphone.");
+    } catch (err) {
+      showToast(`Mic access denied: ${err.message || err}`);
+    }
   });
 
   // Free Browser Speech Recognition (Zero card, zero cost!)
@@ -761,6 +814,24 @@
       showToast(err.message);
     } finally {
       e.target.value = "";
+    }
+  });
+
+  $("retryExtractionBtn").addEventListener("click", async () => {
+    const id = $("editReelId").value;
+    const btn = $("retryExtractionBtn");
+    btn.disabled = true;
+    try {
+      await apiFetch(`/api/reels/${encodeURIComponent(id)}/retry`, {
+        method: "POST",
+      });
+      showToast("Re-running Reel extraction & Local Whisper transcription...");
+      closeDetailModal();
+      await loadReels();
+    } catch (err) {
+      showToast(err.message);
+    } finally {
+      btn.disabled = false;
     }
   });
 
