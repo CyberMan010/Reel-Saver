@@ -92,6 +92,38 @@ class _AddReelSheetState extends State<AddReelSheet> {
     );
   }
 
+  Future<String?> _askBeforeConvertDialog() async {
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Auto-Convert & Transcribe Voice?'),
+        content: const Text(
+          'Would you like Reel-Saver to automatically download this Reel, convert its audio, and transcribe the spoken voice into text?\n\n'
+          '• MP3 Audio (Recommended): Fastest, easiest & ~30x smaller on disk.\n'
+          '• MP4 + MP3: Keeps playable MP4 video + extracts MP3 for Whisper.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(null),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop('skip'),
+            child: const Text('Caption Only'),
+          ),
+          OutlinedButton(
+            onPressed: () => Navigator.of(ctx).pop('mp4'),
+            child: const Text('MP4 + MP3'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop('mp3'),
+            child: const Text('MP3 + Transcribe (Best)'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _submit() async {
     if (_urlCtrl.text.trim().isEmpty && _pickedMediaFile == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -102,6 +134,15 @@ class _AddReelSheetState extends State<AddReelSheet> {
       return;
     }
 
+    var chosenFormat = 'mp3';
+    if (_urlCtrl.text.trim().isNotEmpty &&
+        _pickedMediaFile == null &&
+        _transcriptCtrl.text.trim().isEmpty) {
+      final decision = await _askBeforeConvertDialog();
+      if (decision == null || !mounted) return;
+      chosenFormat = decision;
+    }
+
     setState(() => _submitting = true);
     try {
       await context.read<ReelsProvider>().createReel(
@@ -110,6 +151,7 @@ class _AddReelSheetState extends State<AddReelSheet> {
             caption: _captionCtrl.text,
             transcript: _transcriptCtrl.text,
             categoryName: _categoryCtrl.text,
+            mediaFormat: chosenFormat,
           );
       if (mounted) Navigator.of(context).pop();
     } catch (err) {

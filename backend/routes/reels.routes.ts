@@ -4,6 +4,7 @@ import { authenticate } from "../middlewares/authenticate.middleware";
 import { mediaUpload } from "../middlewares/upload.middleware";
 import { handleValidationErrors } from "../middlewares/validate.middleware";
 import {
+  confirmConvertValidators,
   createReelValidators,
   listReelsValidators,
   reelIdParamValidator,
@@ -95,12 +96,23 @@ router.post(
 );
 
 /**
+ * @route   POST /api/reels/:id/confirm-convert
+ * @desc    Confirm auto-downloading & converting Reel into MP3 (recommended) or MP4+MP3 + Whisper STT
+ */
+router.post(
+  "/:id/confirm-convert",
+  confirmConvertValidators,
+  handleValidationErrors,
+  reelsController.confirmConvertReel
+);
+
+/**
  * @route   POST /api/reels/:id/retry
  * @desc    Retry background processing for a failed or pending reel
  */
 router.post(
   "/:id/retry",
-  reelIdParamValidator,
+  confirmConvertValidators,
   handleValidationErrors,
   reelsController.retryReel
 );

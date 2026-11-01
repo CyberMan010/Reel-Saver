@@ -44,8 +44,10 @@ async function run() {
       extractMetaTagContent,
       parseCaptionFromOgDescription,
       parseAuthorFromOgDescription,
+      shortcodeToMediaId,
     } = await import("../services/extraction.service");
 
+    assert.strictEqual(shortcodeToMediaId("Chunk8-jurw"), "2913440072144448240");
     assert.strictEqual(
       decodeHtmlEntities("&#x648;&#x635;&#x641;&#x629; &amp; &#1583;&#1580;&#1575;&#1580;"),
       "وصفة & دجاج"
@@ -137,10 +139,51 @@ async function run() {
     ]);
     assert.ok(fs.existsSync(sampleMp4Path), "Sample MP4 must exist");
 
-    // 4. Upload MP4 + Reel URL via multipart POST /api/reels
+    // 4a. Verify `askBeforeConvert: true` pauses in AWAITING_CONFIRMATION until confirmed
+    const askRes = await fetch(`${baseUrl}/api/reels`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        sourceUrl: "https://www.instagram.com/reel/C8AskFirst123/",
+        caption: "Quick mobility routine for lower back relief in 5 minutes",
+        askBeforeConvert: true,
+      }),
+    });
+    assert.strictEqual(askRes.status, 202);
+    const askJson = (await askRes.json()) as {
+      data: { reel: { id: string; status: string } };
+    };
+    assert.strictEqual(
+      askJson.data.reel.status,
+      "AWAITING_CONFIRMATION",
+      "Reel with askBeforeConvert=true must wait for confirmation"
+    );
+
+    const confirmRes = await fetch(
+      `${baseUrl}/api/reels/${askJson.data.reel.id}/confirm-convert`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ mediaFormat: "skip" }),
+      }
+    );
+    assert.strictEqual(confirmRes.status, 202);
+    await fetch(`${baseUrl}/api/reels/${askJson.data.reel.id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    // 4b. Upload MP4 + Reel URL with `mediaFormat=mp4` (saves MP4 video + converts MP3 audio)
     const form = new FormData();
     form.append("sourceUrl", "https://www.instagram.com/reel/C9TestRecipe99/");
     form.append("authorHandle", "@amman.kitchen");
+    form.append("mediaFormat", "mp4");
     form.append(
       "caption",
       "Crispy Garlic Butter Salmon in 12 minutes! Sear skin-side down for 5 minutes, flip and baste with butter, garlic, and lemon."
@@ -188,6 +231,10 @@ async function run() {
     assert.ok(
       String(processedReel.audioUrl).endsWith(".mp3"),
       "MP4 must be converted to MP3"
+    );
+    assert.ok(
+      String(processedReel.videoUrl).endsWith(".mp4"),
+      "When mediaFormat=mp4, MP4 videoUrl must also be preserved"
     );
     assert.ok(
       String(processedReel.thumbnailUrl).endsWith(".jpg"),

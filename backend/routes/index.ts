@@ -5,6 +5,7 @@ import categoriesRoutes from "./categories.routes";
 import { ENV } from "../config/env";
 import { isRedisQueueActive } from "../jobs/reels.queue";
 import { isFfmpegAvailable } from "../services/media.service";
+import { isYtDlpInstalledSync } from "../services/ytdlp.service";
 import {
   isLocalWhisperInstalled,
   isNodeWhisperAvailable,
@@ -50,6 +51,8 @@ router.get("/system/capabilities", async (_req, res) => {
       whisperCacheDir: ENV.WHISPER_CACHE_DIR,
       queueMode: redisActive ? "bullmq-redis" : "in-process-async",
       ffmpegAvailable: ffmpegReady,
+      ytDlpInstalled: isYtDlpInstalledSync(),
+      ytDlpAutoDownloadEnabled: ENV.YTDLP_AUTO_DOWNLOAD,
       transcription: {
         preferred: ENV.TRANSCRIPTION_PROVIDER,
         groqWhisperConfigured: Boolean(ENV.GROQ_API_KEY),

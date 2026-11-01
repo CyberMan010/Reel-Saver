@@ -401,7 +401,100 @@
   function statusBadgeClass(status) {
     if (status === "DONE") return "badge-done";
     if (status === "FAILED") return "badge-failed";
+    if (status === "AWAITING_CONFIRMATION") return "badge-awaiting";
     return "badge-processing";
+  }
+
+  function statusDisplayLabel(status) {
+    if (status === "AWAITING_CONFIRMATION") return "ASKING CONFIRMATION";
+    return status;
+  }
+
+  // ─── Pre-Conversion Confirmation Modal ("Asks before converting & transcribing") ──
+  let confirmModalResolver = null;
+
+  function updateFormatSelectionUI() {
+    const selectedRadio = document.querySelector(
+      'input[name="convertFormatChoice"]:checked'
+    );
+    const val = selectedRadio ? selectedRadio.value : "mp3";
+    document.querySelectorAll(".format-option-card").forEach((card) => {
+      card.classList.toggle(
+        "selected",
+        card.getAttribute("data-format") === val
+      );
+    });
+    $("confirmConvertYesBtn").textContent =
+      val === "mp4"
+        ? "✅ Yes, Save MP4 + MP3 & Transcribe"
+        : "✅ Yes, Convert to MP3 & Transcribe";
+  }
+
+  document
+    .querySelectorAll('input[name="convertFormatChoice"]')
+    .forEach((radio) => {
+      radio.addEventListener("change", updateFormatSelectionUI);
+    });
+
+  function resolveConfirmModal(choice) {
+    $("confirmConvertModal").classList.add("hidden");
+    const r = confirmModalResolver;
+    confirmModalResolver = null;
+    if (r) r(choice);
+  }
+
+  $("closeConfirmConvertBtn").addEventListener("click", () =>
+    resolveConfirmModal(null)
+  );
+  $("confirmConvertCancelBtn").addEventListener("click", () =>
+    resolveConfirmModal(null)
+  );
+  $("confirmConvertSkipBtn").addEventListener("click", () =>
+    resolveConfirmModal("skip")
+  );
+  $("confirmConvertYesBtn").addEventListener("click", () => {
+    const selectedRadio = document.querySelector(
+      'input[name="convertFormatChoice"]:checked'
+    );
+    resolveConfirmModal(selectedRadio ? selectedRadio.value : "mp3");
+  });
+
+  function askBeforeConvertingModal({ urlLabel = "", showSkipOption = true }) {
+    $("confirmConvertUrlPreview").textContent = urlLabel ? `Reel: ${urlLabel}` : "";
+    $("confirmConvertSkipBtn").classList.toggle("hidden", !showSkipOption);
+    const mp3Radio = document.querySelector(
+      'input[name="convertFormatChoice"][value="mp3"]'
+    );
+    if (mp3Radio) mp3Radio.checked = true;
+    updateFormatSelectionUI();
+    $("confirmConvertModal").classList.remove("hidden");
+    return new Promise((resolve) => {
+      confirmModalResolver = resolve;
+    });
+  }
+
+  async function promptAndTriggerReelConversion(reel) {
+    const choice = await askBeforeConvertingModal({
+      urlLabel: reel.sourceUrl || "",
+      showSkipOption: reel.status === "AWAITING_CONFIRMATION",
+    });
+    if (!choice) return;
+
+    try {
+      await apiFetch(`/api/reels/${encodeURIComponent(reel.id)}/confirm-convert`, {
+        method: "POST",
+        body: JSON.stringify({ mediaFormat: choice }),
+      });
+      showToast(
+        choice === "skip"
+          ? "Extracting Reel caption & summarizing..."
+          : `Auto-converting Reel to ${choice.toUpperCase()} & transcribing voice to text...`
+      );
+      closeDetailModal();
+      await loadReels();
+    } catch (err) {
+      showToast(err.message);
+    }
   }
 
   function renderReels() {
@@ -425,13 +518,19 @@
       .map((reel) => {
         const title =
           reel.title ||
-          (reel.authorHandle ? `Reel by @${reel.authorHandle}` : "Processing Reel...");
+          (reel.authorHandle
+            ? `Reel by @${reel.authorHandle}`
+            : reel.status === "AWAITING_CONFIRMATION"
+            ? "Ready to Convert & Transcribe"
+            : "Processing Reel...");
         const catName = reel.category?.name || "Uncategorized";
         const processingHint =
-          reel.status === "TRANSCRIBING"
-            ? "Transcribing speech with Local Whisper AI (first run downloads ~140MB model to data/whisper-models)..."
+          reel.status === "AWAITING_CONFIRMATION"
+            ? "Waiting for your confirmation to auto-convert to MP3/MP4 and transcribe voice to text."
+            : reel.status === "TRANSCRIBING"
+            ? "Transcribing spoken voice with Local Whisper AI (first run downloads ~140MB model to data/whisper-models)..."
             : reel.status === "EXTRACTING"
-            ? "Fetching Reel embed metadata & converting media to 16kHz MP3..."
+            ? "Auto-downloading Reel stream & converting to 16kHz MP3 via yt-dlp + FFmpeg..."
             : reel.status === "SUMMARIZING"
             ? "Generating AI summary, key points & category..."
             : "Queued for processing...";
@@ -441,15 +540,28 @@
             ? reel.errorMessage || "Processing failed."
             : processingHint);
         const points = (reel.keyPoints || []).slice(0, 3);
-        const audioTag = reel.audioUrl
+        const audioTag = reel.videoUrl
+          ? `<span>🎬 MP4 + 🎵 MP3${reel.audioDurationSec ? ` (${reel.audioDurationSec}s)` : ""}</span>`
+          : reel.audioUrl
           ? `<span>🎵 MP3 (${reel.audioDurationSec ? `${reel.audioDurationSec}s` : "ready"})</span>`
           : `<span>${reel.authorHandle ? `@${escapeHtml(reel.authorHandle)}` : "Saved Reel"}</span>`;
+
+        const needsVoiceConversion =
+          reel.status === "AWAITING_CONFIRMATION" ||
+          (reel.sourceUrl &&
+            reel.sourceUrl.startsWith("http") &&
+            (!reel.audioUrl || reel.transcriptionSource === "none") &&
+            !["PENDING", "EXTRACTING", "TRANSCRIBING", "SUMMARIZING"].includes(
+              reel.status
+            ));
 
         return `
           <article class="reel-card" data-reel-id="${escapeAttr(reel.id)}">
             <div class="reel-card-top">
               <span class="badge badge-cat">📁 ${escapeHtml(catName)}</span>
-              <span class="badge ${statusBadgeClass(reel.status)}">${escapeHtml(reel.status)}</span>
+              <span class="badge ${statusBadgeClass(reel.status)}">${escapeHtml(
+          statusDisplayLabel(reel.status)
+        )}</span>
             </div>
             <div class="reel-title">${escapeHtml(title)}</div>
             <div class="reel-summary">${escapeHtml(summary)}</div>
@@ -460,6 +572,16 @@
                     .join("")}</ul>`
                 : ""
             }
+            ${
+              needsVoiceConversion
+                ? `<div class="card-convert-cta">
+                    <span style="font-size:12px;color:var(--text-muted);">No voice transcript yet</span>
+                    <button type="button" class="btn btn-primary btn-sm quick-convert-btn" data-convert-id="${escapeAttr(
+                      reel.id
+                    )}">🎙 Auto-Convert &amp; Transcribe</button>
+                  </div>`
+                : ""
+            }
             <div class="reel-meta-footer">
               ${audioTag}
               <span>Adjust &amp; View →</span>
@@ -468,6 +590,15 @@
         `;
       })
       .join("");
+
+    container.querySelectorAll(".quick-convert-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const id = btn.getAttribute("data-convert-id");
+        const reel = reelsCache.find((r) => r.id === id);
+        if (reel) void promptAndTriggerReelConversion(reel);
+      });
+    });
 
     container.querySelectorAll(".reel-card").forEach((card) => {
       card.addEventListener("click", () => {
@@ -655,21 +786,40 @@
 
   $("addReelForm").addEventListener("submit", async (e) => {
     e.preventDefault();
+    const sourceUrl = $("reelSourceUrl").value.trim();
+    const authorHandle = $("reelAuthor").value.trim();
+    const categoryName = $("reelCategoryInput").value.trim();
+    const caption = $("reelCaption").value.trim();
+    const transcript = $("reelTranscriptInput").value.trim();
+
+    if (!sourceUrl && !selectedMediaFile) {
+      showToast("Paste an Instagram Reel URL or choose an MP4/MP3 file.");
+      return;
+    }
+
+    // Ask the user BEFORE auto-downloading/converting a Reel URL into MP3/MP4 & transcribing!
+    let mediaFormat = "mp3";
+    if (sourceUrl && !selectedMediaFile && !transcript) {
+      const choice = await askBeforeConvertingModal({
+        urlLabel: sourceUrl,
+        showSkipOption: true,
+      });
+      if (!choice) {
+        return; // User cancelled
+      }
+      mediaFormat = choice;
+    }
+
     const btn = $("submitAddReelBtn");
     btn.disabled = true;
     try {
       const form = new FormData();
-      const sourceUrl = $("reelSourceUrl").value.trim();
-      const authorHandle = $("reelAuthor").value.trim();
-      const categoryName = $("reelCategoryInput").value.trim();
-      const caption = $("reelCaption").value.trim();
-      const transcript = $("reelTranscriptInput").value.trim();
-
       if (sourceUrl) form.append("sourceUrl", sourceUrl);
       if (authorHandle) form.append("authorHandle", authorHandle);
       if (categoryName) form.append("categoryName", categoryName);
       if (caption) form.append("caption", caption);
       if (transcript) form.append("transcript", transcript);
+      form.append("mediaFormat", mediaFormat);
       if (selectedMediaFile) form.append("media", selectedMediaFile);
 
       await apiFetch("/api/reels", {
@@ -678,7 +828,11 @@
       });
 
       closeAddModal();
-      showToast("Reel submitted! Converting & summarizing...");
+      showToast(
+        mediaFormat === "skip"
+          ? "Reel saved! Extracting caption & summarizing..."
+          : `Auto-converting Reel to ${mediaFormat.toUpperCase()} & transcribing voice to text...`
+      );
       await Promise.all([loadReels(), loadCategories()]);
     } catch (err) {
       showToast(err.message);
@@ -691,12 +845,22 @@
   function openDetailModal(reel) {
     $("editReelId").value = reel.id;
     const badge = $("detailStatusBadge");
-    badge.textContent = reel.status;
+    badge.textContent = statusDisplayLabel(reel.status);
     badge.className = `badge ${statusBadgeClass(reel.status)}`;
 
     $("detailSourceBadge").textContent = reel.transcriptionSource
       ? `Transcript source: ${reel.transcriptionSource}`
       : "";
+
+    const videoBox = $("detailVideoBox");
+    const videoPlayer = $("detailVideoPlayer");
+    if (reel.videoUrl) {
+      videoBox.classList.remove("hidden");
+      videoPlayer.src = reel.videoUrl;
+    } else {
+      videoBox.classList.add("hidden");
+      videoPlayer.removeAttribute("src");
+    }
 
     const audioBox = $("detailAudioBox");
     const audioPlayer = $("detailAudioPlayer");
@@ -732,6 +896,7 @@
 
   function closeDetailModal() {
     $("detailAudioPlayer").pause();
+    $("detailVideoPlayer").pause();
     $("detailModal").classList.add("hidden");
   }
 
@@ -819,20 +984,12 @@
 
   $("retryExtractionBtn").addEventListener("click", async () => {
     const id = $("editReelId").value;
-    const btn = $("retryExtractionBtn");
-    btn.disabled = true;
-    try {
-      await apiFetch(`/api/reels/${encodeURIComponent(id)}/retry`, {
-        method: "POST",
-      });
-      showToast("Re-running Reel extraction & Local Whisper transcription...");
-      closeDetailModal();
-      await loadReels();
-    } catch (err) {
-      showToast(err.message);
-    } finally {
-      btn.disabled = false;
-    }
+    const reel = reelsCache.find((r) => r.id === id) || {
+      id,
+      sourceUrl: $("openOriginalUrlBtn").getAttribute("href") || "",
+      status: "DONE",
+    };
+    await promptAndTriggerReelConversion(reel);
   });
 
   $("deleteReelBtn").addEventListener("click", async () => {

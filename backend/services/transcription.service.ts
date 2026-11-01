@@ -36,15 +36,18 @@ let cachedNodeTranscriberPromise: Promise<
 let cachedNodeModelId: string | null = null;
 
 export function isNodeWhisperAvailable(): boolean {
-  try {
-    const pkgPath = path.resolve(
-      process.cwd(),
-      "node_modules/@xenova/transformers/package.json"
-    );
-    return fs.existsSync(pkgPath);
-  } catch {
-    return false;
-  }
+  const candidates = [
+    path.resolve(process.cwd(), "node_modules/@xenova/transformers/package.json"),
+    path.resolve(__dirname, "../node_modules/@xenova/transformers/package.json"),
+    path.resolve(__dirname, "../../node_modules/@xenova/transformers/package.json"),
+  ];
+  return candidates.some((p) => {
+    try {
+      return fs.existsSync(p);
+    } catch {
+      return false;
+    }
+  });
 }
 
 async function resolvePythonCommand(): Promise<PythonCommand | null> {
@@ -259,13 +262,18 @@ async function transcribeWithNodeWhisper(
   }
 
   const startMs = Date.now();
+  const isEnglishOnlyModel = /\.en$/i.test(modelId);
   const options: Record<string, unknown> = {
     chunk_length_s: 30,
     stride_length_s: 5,
   };
-  if (ENV.WHISPER_LANGUAGE) {
-    options.language = ENV.WHISPER_LANGUAGE;
+  if (!isEnglishOnlyModel) {
+    // Passing task="transcribe" with language omitted clears any English-forced
+    // token in generation_config so multilingual Whisper auto-detects Arabic/English/etc.
     options.task = "transcribe";
+    if (ENV.WHISPER_LANGUAGE) {
+      options.language = ENV.WHISPER_LANGUAGE;
+    }
   }
 
   const result = await transcriber(samples, options);
