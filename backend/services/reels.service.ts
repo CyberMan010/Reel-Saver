@@ -15,6 +15,7 @@ import {
 import type {
   CreateReelBody,
   ListReelsQuery,
+  MediaFormatPreference,
   Reel,
   ReelWithCategory,
   UpdateReelBody,
@@ -76,6 +77,12 @@ export async function saveReel(
   }
 
   const clientTranscript = body.transcript?.trim() || null;
+  const askBeforeConvert =
+    body.askBeforeConvert === true || body.askBeforeConvert === "true";
+  const mediaFormat: MediaFormatPreference = body.mediaFormat ?? "mp3";
+
+  const shouldWaitConfirmation =
+    askBeforeConvert && !uploadedFile && !clientTranscript;
 
   const reel = await reelRepo.createReel({
     id: randomUUID(),
@@ -90,11 +97,39 @@ export async function saveReel(
     notes: body.notes?.trim() || null,
     transcriptionSource: clientTranscript ? "client" : null,
     categoryId,
+    initialStatus: shouldWaitConfirmation ? "AWAITING_CONFIRMATION" : "PENDING",
   });
+
+  if (shouldWaitConfirmation) {
+    // Lightweight metadata preview without downloading video/audio until user confirms
+    setImmediate(() => {
+      extractReelContent(sourceUrl, {
+        existingAuthorHandle: reel.authorHandle,
+        existingCaption: reel.caption,
+        existingThumbnailUrl: reel.thumbnailUrl,
+        mediaFormat: "skip",
+      })
+        .then(async (preview) => {
+          if (preview.authorHandle || preview.caption || preview.thumbnailUrl) {
+            await reelRepo.updateReelExtraction(reel.id, {
+              authorHandle: reel.authorHandle ?? preview.authorHandle,
+              caption: reel.caption ?? preview.caption,
+              thumbnailUrl: reel.thumbnailUrl ?? preview.thumbnailUrl,
+            });
+          }
+        })
+        .catch(() => {
+          // Ignore preview errors; full extraction runs after user confirms
+        });
+    });
+
+    return attachCategory(reel);
+  }
 
   await enqueueReelProcessing(reel.id, {
     uploadedFilePath: uploadedFile?.path ?? null,
     uploadedMimeType: uploadedFile?.mimetype ?? null,
+    mediaFormat,
   });
 
   return attachCategory(reel);
@@ -144,6 +179,7 @@ export async function processReel(
   options?: {
     uploadedFilePath?: string | null;
     uploadedMimeType?: string | null;
+    mediaFormat?: MediaFormatPreference;
     forceReprocess?: boolean;
   }
 ): Promise<void> {
@@ -156,8 +192,10 @@ export async function processReel(
     return;
   }
 
+  const mediaFormat: MediaFormatPreference = options?.mediaFormat ?? "mp3";
+
   try {
-    // ─── Stage 1: Metadata & Media Extraction (MP4 -> MP3) ──────────────────
+    // ─── Stage 1: Metadata & Auto Media Conversion (MP3 or MP4+MP3) ─────────
     await reelRepo.updateReelStatus(reelId, "EXTRACTING", null);
 
     const hasRealExistingTranscript = Boolean(
@@ -166,20 +204,25 @@ export async function processReel(
         reel.transcriptionSource !== "caption-inferred"
     );
 
+    const hasExistingSatisfiedMedia = Boolean(
+      options?.uploadedFilePath ||
+        (reel.audioUrl && (mediaFormat !== "mp4" || reel.videoUrl))
+    );
+
     const extracted = await extractReelContent(reel.sourceUrl, {
       reelId,
       existingAuthorHandle: reel.authorHandle,
       existingCaption: reel.caption,
       existingThumbnailUrl: reel.thumbnailUrl,
-      hasLocalMediaOrTranscript: Boolean(
-        options?.uploadedFilePath || reel.audioUrl || hasRealExistingTranscript
-      ),
+      hasLocalMedia: hasExistingSatisfiedMedia,
+      mediaFormat,
     });
 
     const authorHandle = reel.authorHandle ?? extracted.authorHandle;
     const caption = reel.caption ?? extracted.caption;
     let thumbnailUrl = reel.thumbnailUrl ?? extracted.thumbnailUrl;
     let audioUrl = reel.audioUrl;
+    let videoUrl = reel.videoUrl;
     let audioDurationSec = reel.audioDurationSec;
     let audioDiskPath: string | null = null;
 
@@ -190,10 +233,12 @@ export async function processReel(
       const processedMedia = await convertMediaToMp3(
         reelId,
         incomingMediaPath,
-        options?.uploadedMimeType ?? undefined
+        options?.uploadedMimeType ?? undefined,
+        { keepVideoMp4: mediaFormat === "mp4" }
       );
       audioDiskPath = processedMedia.audioDiskPath;
       audioUrl = processedMedia.audioUrl ?? audioUrl;
+      videoUrl = processedMedia.videoUrl ?? videoUrl;
       audioDurationSec = processedMedia.durationSec ?? audioDurationSec;
       thumbnailUrl = thumbnailUrl ?? processedMedia.thumbnailUrl;
     } else if (audioUrl) {
@@ -208,6 +253,7 @@ export async function processReel(
       caption,
       thumbnailUrl,
       audioUrl,
+      videoUrl,
       audioDurationSec,
     });
 
@@ -217,7 +263,12 @@ export async function processReel(
       ? reel.transcriptionSource
       : null;
 
-    if (!spokenTranscript && audioDiskPath && ENV.ENABLE_VIDEO_TRANSCRIPTION) {
+    if (
+      !spokenTranscript &&
+      audioDiskPath &&
+      mediaFormat !== "skip" &&
+      ENV.ENABLE_VIDEO_TRANSCRIPTION
+    ) {
       await reelRepo.updateReelStatus(reelId, "TRANSCRIBING", null);
       const sttResult = await transcribeAudioFile(audioDiskPath);
       if (sttResult && sttResult.transcript) {
@@ -245,8 +296,12 @@ export async function processReel(
     });
 
     if (!spokenTranscript) {
+      const fallbackTranscript =
+        !caption && extracted.extractionHint
+          ? `${extracted.extractionHint}`
+          : aiResult.transcript;
       await reelRepo.updateReelExtraction(reelId, {
-        transcript: aiResult.transcript,
+        transcript: fallbackTranscript,
         transcriptionSource: caption ? "caption-inferred" : "none",
       });
     } else {
@@ -459,9 +514,10 @@ export async function resummarizeReelForUser(
   return attachCategory(updated);
 }
 
-export async function retryReelForUser(
+export async function confirmAndConvertReelForUser(
   userId: string,
-  reelId: string
+  reelId: string,
+  mediaFormat: MediaFormatPreference = "mp3"
 ): Promise<ReelWithCategory> {
   const reel = await reelRepo.findReelById(reelId, userId);
   if (!reel) {
@@ -482,10 +538,18 @@ export async function retryReelForUser(
   });
 
   await reelRepo.updateReelStatus(reelId, "PENDING", null);
-  await enqueueReelProcessing(reelId);
+  await enqueueReelProcessing(reelId, { mediaFormat });
 
   const updated = await reelRepo.findReelById(reelId, userId);
   return attachCategory(updated ?? reel);
+}
+
+export async function retryReelForUser(
+  userId: string,
+  reelId: string,
+  mediaFormat: MediaFormatPreference = "mp3"
+): Promise<ReelWithCategory> {
+  return confirmAndConvertReelForUser(userId, reelId, mediaFormat);
 }
 
 export async function deleteReelForUser(
@@ -506,6 +570,7 @@ registerInProcessReelWorker(async (payload) => {
   await processReel(payload.reelId, {
     uploadedFilePath: payload.uploadedFilePath,
     uploadedMimeType: payload.uploadedMimeType,
+    mediaFormat: payload.mediaFormat,
     forceReprocess: true,
   });
 });

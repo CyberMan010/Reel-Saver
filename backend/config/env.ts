@@ -94,8 +94,16 @@ export const ENV = {
   EXTERNAL_MEDIA_RESOLVER_URL: getEnv("EXTERNAL_MEDIA_RESOLVER_URL"),
   EXTERNAL_MEDIA_RESOLVER_KEY: getEnv("EXTERNAL_MEDIA_RESOLVER_KEY"),
 
-  // FFmpeg & Local Whisper (100% Free, No Credit Card, Built-In Node ONNX + Optional Python)
+  // FFmpeg, Auto-Managed yt-dlp & Local Whisper (100% Free, No Credit Card, Stored on Repo Drive)
   FFMPEG_PATH: getEnv("FFMPEG_PATH"),
+  YTDLP_PATH: getEnv("YTDLP_PATH"),
+  YTDLP_BIN_DIR: getEnv(
+    "YTDLP_BIN_DIR",
+    path.resolve(defaultLocalDataDir, "bin")
+  ),
+  YTDLP_AUTO_DOWNLOAD: getEnv("YTDLP_AUTO_DOWNLOAD", "true") !== "false",
+  YTDLP_COOKIES_FROM_BROWSER: getEnv("YTDLP_COOKIES_FROM_BROWSER", ""),
+  YTDLP_COOKIES_FILE: getEnv("YTDLP_COOKIES_FILE", ""),
   PYTHON_BIN: getEnv("PYTHON_BIN", ""),
   WHISPER_MODEL_SIZE: getEnv("WHISPER_MODEL_SIZE", "base"),
   WHISPER_LANGUAGE: getEnv("WHISPER_LANGUAGE", ""),

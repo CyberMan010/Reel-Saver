@@ -9,6 +9,7 @@ const EXTENDED_COLUMNS = new Set([
   "title",
   "notes",
   "audioUrl",
+  "videoUrl",
   "audioDurationSec",
   "transcriptionSource",
 ]);
@@ -27,6 +28,7 @@ function normalizeReelRow(row: Partial<Reel> & Record<string, unknown>): Reel {
     keyPoints: Array.isArray(row.keyPoints) ? (row.keyPoints as string[]) : [],
     notes: (row.notes as string | null) ?? null,
     audioUrl: (row.audioUrl as string | null) ?? null,
+    videoUrl: (row.videoUrl as string | null) ?? null,
     audioDurationSec:
       typeof row.audioDurationSec === "number" ? row.audioDurationSec : null,
     transcriptionSource: (row.transcriptionSource as string | null) ?? null,
@@ -67,11 +69,14 @@ export async function createReel(payload: {
   transcript?: string | null;
   notes?: string | null;
   audioUrl?: string | null;
+  videoUrl?: string | null;
   audioDurationSec?: number | null;
   transcriptionSource?: string | null;
   categoryId?: string | null;
+  initialStatus?: ReelStatus;
 }): Promise<Reel> {
   const now = new Date().toISOString();
+  const status: ReelStatus = payload.initialStatus ?? "PENDING";
   const fullRecord: Reel = {
     id: payload.id,
     userId: payload.userId,
@@ -85,9 +90,10 @@ export async function createReel(payload: {
     keyPoints: [],
     notes: payload.notes ?? null,
     audioUrl: payload.audioUrl ?? null,
+    videoUrl: payload.videoUrl ?? null,
     audioDurationSec: payload.audioDurationSec ?? null,
     transcriptionSource: payload.transcriptionSource ?? null,
-    status: "PENDING",
+    status,
     errorMessage: null,
     categoryId: payload.categoryId ?? null,
     createdAt: now,
@@ -107,10 +113,11 @@ export async function createReel(payload: {
         transcript: fullRecord.transcript,
         notes: fullRecord.notes,
         audioUrl: fullRecord.audioUrl,
+        videoUrl: fullRecord.videoUrl,
         audioDurationSec: fullRecord.audioDurationSec,
         transcriptionSource: fullRecord.transcriptionSource,
         categoryId: fullRecord.categoryId,
-        status: "PENDING",
+        status,
         keyPoints: [],
       };
 
@@ -123,6 +130,9 @@ export async function createReel(payload: {
       if (error) {
         if (isMissingColumnOrEnumError(error.message)) {
           const fallback = stripExtendedColumns(insertPayload);
+          if (fallback.status === "AWAITING_CONFIRMATION") {
+            fallback.status = "PENDING";
+          }
           const retry = await supabaseAdmin
             .from(TABLE)
             .insert([fallback])
@@ -261,6 +271,8 @@ async function applySupabaseReelUpdate(
       const safeUpdates = stripExtendedColumns(updates);
       if (safeUpdates.status === "TRANSCRIBING") {
         safeUpdates.status = "EXTRACTING";
+      } else if (safeUpdates.status === "AWAITING_CONFIRMATION") {
+        safeUpdates.status = "PENDING";
       }
       const retry = await supabaseAdmin
         .from(TABLE)
@@ -313,6 +325,7 @@ export async function updateReelExtraction(
     thumbnailUrl?: string | null;
     transcript?: string | null;
     audioUrl?: string | null;
+    videoUrl?: string | null;
     audioDurationSec?: number | null;
     transcriptionSource?: string | null;
   }
@@ -334,6 +347,7 @@ export async function updateReelExtraction(
         if (fields.transcript !== undefined)
           reel.transcript = fields.transcript;
         if (fields.audioUrl !== undefined) reel.audioUrl = fields.audioUrl;
+        if (fields.videoUrl !== undefined) reel.videoUrl = fields.videoUrl;
         if (fields.audioDurationSec !== undefined)
           reel.audioDurationSec = fields.audioDurationSec;
         if (fields.transcriptionSource !== undefined)

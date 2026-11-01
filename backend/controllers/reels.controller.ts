@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import * as reelsService from "../services/reels.service";
 import { sendSuccess } from "../utils/response.util";
 import type {
+  ConfirmConvertBody,
   CreateReelBody,
   ListReelsQuery,
   ReelStatus,
@@ -27,7 +28,11 @@ export async function createReel(
       req.body ?? {},
       uploadedFile
     );
-    sendSuccess(res, "Reel saved. Processing started.", { reel }, 202);
+    const message =
+      reel.status === "AWAITING_CONFIRMATION"
+        ? "Reel saved. Waiting for your confirmation to convert & transcribe."
+        : "Reel saved. Processing started.";
+    sendSuccess(res, message, { reel }, 202);
   } catch (err) {
     next(err);
   }
@@ -154,15 +159,41 @@ export async function resummarizeReel(
   }
 }
 
+export async function confirmConvertReel(
+  req: Request<{ id: string }, object, ConfirmConvertBody>,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const mediaFormat = req.body?.mediaFormat ?? "mp3";
+    const reel = await reelsService.confirmAndConvertReelForUser(
+      req.user!.userId,
+      req.params.id,
+      mediaFormat
+    );
+    sendSuccess(
+      res,
+      mediaFormat === "skip"
+        ? "Extracting caption & summarizing without audio download."
+        : `Auto-converting Reel to ${mediaFormat.toUpperCase()} and transcribing voice to text.`,
+      { reel },
+      202
+    );
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function retryReel(
-  req: Request<{ id: string }>,
+  req: Request<{ id: string }, object, ConfirmConvertBody>,
   res: Response,
   next: NextFunction
 ): Promise<void> {
   try {
     const reel = await reelsService.retryReelForUser(
       req.user!.userId,
-      req.params.id
+      req.params.id,
+      req.body?.mediaFormat ?? "mp3"
     );
     sendSuccess(res, "Reel processing restarted.", { reel }, 202);
   } catch (err) {

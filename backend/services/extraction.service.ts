@@ -1,11 +1,8 @@
-import { execFile } from "child_process";
 import fs from "fs";
 import path from "path";
-import { promisify } from "util";
 import { ENV } from "../config/env";
-import { ensureUploadDirs, resolveFfmpegPath } from "./media.service";
-
-const execFileAsync = promisify(execFile);
+import { ensureUploadDirs } from "./media.service";
+import { downloadReelWithYtDlp } from "./ytdlp.service";
 
 const OEMBED_ENDPOINT = "https://graph.facebook.com/v25.0/instagram_oembed";
 
@@ -14,8 +11,20 @@ const PUBLIC_EMBED_HEADERS: Record<string, string> = {
     "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
   "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
 };
+
+const CRAWLER_OG_HEADERS: Record<string, string> = {
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
+  "User-Agent":
+    "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+};
+
+const IG_SHORTCODE_ALPHABET =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+export type MediaConversionChoice = "mp3" | "mp4" | "skip";
 
 export class ExtractionError extends Error {}
 
@@ -24,6 +33,7 @@ export interface ExtractedMetadata {
   caption: string | null;
   thumbnailUrl: string | null;
   resolvedMediaFilePath?: string | null;
+  extractionHint?: string | null;
 }
 
 const metadataCache = new Map<
@@ -51,6 +61,18 @@ export function extractInstagramShortcode(url: string): string | null {
     /(?:instagram\.com|instagr\.am)\/(?:[\w.]+\/)?(?:reel|reels|p|tv)\/([\w-]+)/i
   );
   return match?.[1] ?? null;
+}
+
+export function shortcodeToMediaId(shortcode: string): string | null {
+  const clean = shortcode.length > 28 ? shortcode.slice(0, -28) : shortcode;
+  if (!clean) return null;
+  let id = 0n;
+  for (const ch of clean) {
+    const idx = IG_SHORTCODE_ALPHABET.indexOf(ch);
+    if (idx < 0) return null;
+    id = id * 64n + BigInt(idx);
+  }
+  return id.toString(10);
 }
 
 export function normalizeInstagramUrl(url: string): string {
@@ -91,8 +113,6 @@ function stripTags(html: string): string {
 
 /**
  * Attribute-order-independent `<meta>` tag extractor.
- * Matches both `<meta property="og:description" content="...">`
- * and `<meta content="..." property="og:description">`.
  */
 export function extractMetaTagContent(
   html: string,
@@ -125,7 +145,6 @@ export function parseCaptionFromOgDescription(
   const decoded = decodeHtmlEntities(description).trim();
   if (!decoded) return null;
 
-  // Ignore generic Instagram login-wall boilerplate descriptions
   if (
     /^Create an account or log in to Instagram/i.test(decoded) ||
     /^Welcome back to Instagram/i.test(decoded)
@@ -133,7 +152,6 @@ export function parseCaptionFromOgDescription(
     return null;
   }
 
-  // Standard IG format: `12K likes, 45 comments - handle on Oct 15, 2026: "Caption text".`
   const quotedAfterColon = decoded.match(/:\s*["“]([\s\S]+)["”]\.?\s*$/);
   if (quotedAfterColon?.[1]?.trim()) {
     return quotedAfterColon[1].trim();
@@ -146,8 +164,11 @@ export function parseCaptionFromOgDescription(
     return colonMatch[1].replace(/^["“]|["”]\.?$/g, "").trim();
   }
 
-  // If it only says "120 likes, 4 comments - user on Date" with no colon, there is no caption
-  if (/^\d[\d,.KMB]*\s+likes?,\s*\d[\d,.KMB]*\s+comments?\s*-\s*[^:]+$/i.test(decoded)) {
+  if (
+    /^\d[\d,.KMB]*\s+likes?,\s*\d[\d,.KMB]*\s+comments?\s*-\s*[^:]+$/i.test(
+      decoded
+    )
+  ) {
     return null;
   }
 
@@ -183,7 +204,7 @@ async function downloadStreamToFile(
 ): Promise<string | null> {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 25000);
+    const timer = setTimeout(() => controller.abort(), 35000);
     try {
       const res = await fetch(streamUrl, {
         headers: PUBLIC_EMBED_HEADERS,
@@ -203,9 +224,123 @@ async function downloadStreamToFile(
 }
 
 /**
- * Parses Instagram's public `/p/<shortcode>/embed/captioned/` widget HTML.
- * Extracts full caption, @username, thumbnail, and public embed video stream if present.
+ * Pure-Node Instagram GraphQL (`PolarisLoggedOutDesktopWWWPostRootContentQuery`)
+ * fallback for public Reel metadata & direct MP4 stream URL.
  */
+async function tryPolarisGraphQlExtraction(
+  shortcode: string,
+  normalizedUrl: string
+): Promise<{
+  authorHandle: string | null;
+  caption: string | null;
+  thumbnailUrl: string | null;
+  publicVideoUrl: string | null;
+}> {
+  const mediaId = shortcodeToMediaId(shortcode);
+  if (!mediaId) {
+    return {
+      authorHandle: null,
+      caption: null,
+      thumbnailUrl: null,
+      publicVideoUrl: null,
+    };
+  }
+
+  try {
+    const lsdToken = "AVqbxe3J_YA";
+    const body = new URLSearchParams({
+      lsd: lsdToken,
+      fb_api_caller_class: "RelayModern",
+      fb_api_req_friendly_name:
+        "PolarisLoggedOutDesktopWWWPostRootContentQuery",
+      server_timestamps: "true",
+      variables: JSON.stringify({ media_id: mediaId, shortcode }),
+      doc_id: "27130156389949648",
+    });
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+      const res = await fetch("https://www.instagram.com/api/graphql", {
+        method: "POST",
+        headers: {
+          ...PUBLIC_EMBED_HEADERS,
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-IG-App-ID": "936619743392459",
+          "X-FB-LSD": lsdToken,
+          "X-FB-Friendly-Name":
+            "PolarisLoggedOutDesktopWWWPostRootContentQuery",
+          "X-Requested-With": "XMLHttpRequest",
+          Referer: normalizedUrl,
+        },
+        body: body.toString(),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        return {
+          authorHandle: null,
+          caption: null,
+          thumbnailUrl: null,
+          publicVideoUrl: null,
+        };
+      }
+
+      const json = (await res.json()) as {
+        data?: {
+          xig_polaris_media?: {
+            if_not_gated_logged_out?: {
+              user?: { username?: string };
+              owner?: { username?: string };
+              caption?: { text?: string };
+              video_versions?: Array<{ url?: string }>;
+              image_versions2?: { candidates?: Array<{ url?: string }> };
+            };
+          };
+          xdt_shortcode_media?: {
+            owner?: { username?: string };
+            video_url?: string;
+            display_url?: string;
+            edge_media_to_caption?: {
+              edges?: Array<{ node?: { text?: string } }>;
+            };
+          };
+        };
+      };
+
+      const polaris = json.data?.xig_polaris_media?.if_not_gated_logged_out;
+      const xdt = json.data?.xdt_shortcode_media;
+
+      const authorHandle =
+        polaris?.user?.username ??
+        polaris?.owner?.username ??
+        xdt?.owner?.username ??
+        null;
+      const caption =
+        polaris?.caption?.text?.trim() ??
+        xdt?.edge_media_to_caption?.edges?.[0]?.node?.text?.trim() ??
+        null;
+      const publicVideoUrl =
+        polaris?.video_versions?.[0]?.url ?? xdt?.video_url ?? null;
+      const thumbnailUrl =
+        polaris?.image_versions2?.candidates?.[0]?.url ??
+        xdt?.display_url ??
+        null;
+
+      return { authorHandle, caption, thumbnailUrl, publicVideoUrl };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return {
+      authorHandle: null,
+      caption: null,
+      thumbnailUrl: null,
+      publicVideoUrl: null,
+    };
+  }
+}
+
 function parsePublicEmbedCaptionedHtml(html: string): {
   authorHandle: string | null;
   caption: string | null;
@@ -217,7 +352,6 @@ function parsePublicEmbedCaptionedHtml(html: string): {
   let thumbnailUrl: string | null = null;
   let publicVideoUrl: string | null = null;
 
-  // 1. Parse embedded `contextJSON` payload if present
   const ctxMatch = html.match(/"contextJSON"\s*:\s*"((?:\\.|[^"\\])*)"/);
   if (ctxMatch?.[1]) {
     try {
@@ -263,19 +397,19 @@ function parsePublicEmbedCaptionedHtml(html: string): {
     }
   }
 
-  // Also check direct escaped video_url inside embed script if present
   if (!publicVideoUrl) {
     const videoUrlMatch = html.match(/"video_url"\s*:\s*"(https?:[^"]+)"/);
     if (videoUrlMatch?.[1]) {
       try {
         publicVideoUrl = JSON.parse(`"${videoUrlMatch[1]}"`) as string;
       } catch {
-        publicVideoUrl = videoUrlMatch[1].replace(/\\u0026/g, "&").replace(/\\\//g, "/");
+        publicVideoUrl = videoUrlMatch[1]
+          .replace(/\\u0026/g, "&")
+          .replace(/\\\//g, "/");
       }
     }
   }
 
-  // 2. Parse rendered DOM inside `/embed/captioned/`
   if (!authorHandle) {
     const userMatch = html.match(
       /class="[^"]*\bUsernameText\b[^"]*"[^>]*>([\s\S]*?)<\//i
@@ -292,10 +426,15 @@ function parsePublicEmbedCaptionedHtml(html: string): {
     );
     if (captionBlockMatch?.[1]) {
       let blockHtml = captionBlockMatch[1];
-      // Remove leading CaptionUsername anchor and trailing CaptionComments div
       blockHtml = blockHtml
-        .replace(/<a[^>]*class="[^"]*\bCaptionUsername\b[^"]*"[^>]*>[\s\S]*?<\/a>/gi, "")
-        .replace(/<div[^>]*class="[^"]*\bCaptionComments\b[^"]*"[^>]*>[\s\S]*$/gi, "");
+        .replace(
+          /<a[^>]*class="[^"]*\bCaptionUsername\b[^"]*"[^>]*>[\s\S]*?<\/a>/gi,
+          ""
+        )
+        .replace(
+          /<div[^>]*class="[^"]*\bCaptionComments\b[^"]*"[^>]*>[\s\S]*$/gi,
+          ""
+        );
       const text = stripTags(blockHtml).trim();
       if (text) caption = text;
     }
@@ -315,7 +454,8 @@ function parsePublicEmbedCaptionedHtml(html: string): {
 
 async function tryExternalMediaResolver(
   reelId: string,
-  normalizedUrl: string
+  normalizedUrl: string,
+  formatMode: "mp3" | "mp4"
 ): Promise<string | null> {
   if (!ENV.EXTERNAL_MEDIA_RESOLVER_URL) {
     return null;
@@ -335,7 +475,7 @@ async function tryExternalMediaResolver(
       headers,
       body: JSON.stringify({
         url: normalizedUrl,
-        downloadMode: "audio",
+        downloadMode: formatMode === "mp4" ? "auto" : "audio",
         audioFormat: "mp3",
       }),
     });
@@ -350,9 +490,10 @@ async function tryExternalMediaResolver(
     if (!streamUrl) return null;
 
     const { rawDir } = ensureUploadDirs();
+    const ext = formatMode === "mp4" ? "mp4" : "mp3";
     return await downloadStreamToFile(
       streamUrl,
-      path.join(rawDir, `${reelId}-resolved.mp3`)
+      path.join(rawDir, `${reelId}-resolved.${ext}`)
     );
   } catch {
     return null;
@@ -360,62 +501,11 @@ async function tryExternalMediaResolver(
 }
 
 /**
- * Optional local `yt-dlp` CLI check if the developer has `yt-dlp` installed on PATH.
- */
-async function tryLocalYtDlpAudio(
-  reelId: string,
-  normalizedUrl: string
-): Promise<string | null> {
-  const candidates =
-    process.platform === "win32" ? ["yt-dlp.exe", "yt-dlp"] : ["yt-dlp"];
-  const { rawDir } = ensureUploadDirs();
-  const outputTemplate = path.join(rawDir, `${reelId}-ytdlp.%(ext)s`);
-  const ffmpegPath = resolveFfmpegPath();
-
-  for (const bin of candidates) {
-    try {
-      await execFileAsync(bin, ["--version"], { timeout: 3000 });
-    } catch {
-      continue;
-    }
-
-    try {
-      const args = [
-        "--no-playlist",
-        "--no-warnings",
-        "-f",
-        "bestaudio/best",
-        "-o",
-        outputTemplate,
-      ];
-      if (ffmpegPath && ffmpegPath !== "ffmpeg") {
-        args.push("--ffmpeg-location", ffmpegPath);
-      }
-      args.push(normalizedUrl);
-
-      await execFileAsync(bin, args, { timeout: 45000 });
-
-      const files = fs
-        .readdirSync(rawDir)
-        .filter((f) => f.startsWith(`${reelId}-ytdlp.`));
-      if (files.length > 0) {
-        return path.join(rawDir, files[0]);
-      }
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
-/**
- * Multi-stage Reel metadata & public audio extractor:
- * 1. Client-supplied metadata (Flutter Share Sheet / manual input)
- * 2. 24h shortcode cache
- * 3. Meta Graph API `instagram_oembed` (if token has `oEmbed Read` permission)
- * 4. Official Instagram public embed widget (`/p/<shortcode>/embed/captioned/`)
- * 5. Public OpenGraph `<meta>` fallback
- * 6. Optional Cobalt resolver (`EXTERNAL_MEDIA_RESOLVER_URL`), public embed video stream, or local `yt-dlp`
+ * Multi-stage Reel metadata & automatic audio/video extractor:
+ * - When `mediaFormat` is `"mp3"` (recommended) or `"mp4"`, automatically resolves & downloads
+ *   the Reel stream using auto-managed standalone `yt-dlp` (with TLS impersonation) +
+ *   2026 Polaris GraphQL + Public Embed + External Resolver fallbacks.
+ * - When `mediaFormat` is `"skip"`, extracts metadata/caption only without downloading media.
  */
 export async function extractReelContent(
   sourceUrl: string,
@@ -424,7 +514,8 @@ export async function extractReelContent(
     existingAuthorHandle?: string | null;
     existingCaption?: string | null;
     existingThumbnailUrl?: string | null;
-    hasLocalMediaOrTranscript?: boolean;
+    hasLocalMedia?: boolean;
+    mediaFormat?: MediaConversionChoice;
   }
 ): Promise<ExtractedMetadata> {
   if (isUploadPlaceholderUrl(sourceUrl)) {
@@ -433,37 +524,60 @@ export async function extractReelContent(
       caption: options?.existingCaption ?? null,
       thumbnailUrl: options?.existingThumbnailUrl ?? null,
       resolvedMediaFilePath: null,
+      extractionHint: null,
     };
   }
 
   const normalizedUrl = normalizeInstagramUrl(sourceUrl);
   const shortcode = extractInstagramShortcode(sourceUrl);
-
-  let resolvedMediaFilePath =
-    options?.reelId && !options?.hasLocalMediaOrTranscript
-      ? await tryExternalMediaResolver(options.reelId, normalizedUrl)
-      : null;
-
-  if (options?.existingCaption) {
-    return {
-      authorHandle: options.existingAuthorHandle ?? null,
-      caption: options.existingCaption,
-      thumbnailUrl: options.existingThumbnailUrl ?? null,
-      resolvedMediaFilePath,
-    };
-  }
+  const mediaFormat: MediaConversionChoice = options?.mediaFormat ?? "mp3";
+  const shouldDownloadMedia =
+    Boolean(options?.reelId) &&
+    !options?.hasLocalMedia &&
+    mediaFormat !== "skip" &&
+    ENV.ENABLE_VIDEO_TRANSCRIPTION;
 
   const cached = metadataCache.get(normalizedUrl);
+  const validCache =
+    cached && cached.expiresAt > Date.now() ? cached.value : null;
+
   let authorHandle: string | null =
-    options?.existingAuthorHandle ?? cached?.value.authorHandle ?? null;
+    options?.existingAuthorHandle ?? validCache?.authorHandle ?? null;
   let caption: string | null =
-    options?.existingCaption ?? cached?.value.caption ?? null;
+    options?.existingCaption ?? validCache?.caption ?? null;
   let thumbnailUrl: string | null =
-    options?.existingThumbnailUrl ?? cached?.value.thumbnailUrl ?? null;
+    options?.existingThumbnailUrl ?? validCache?.thumbnailUrl ?? null;
 
   let publicVideoUrl: string | null = null;
+  let resolvedMediaFilePath: string | null = null;
+  let extractionHint: string | null = null;
 
-  // Stage 3: Official Meta Graph API oEmbed
+  // Stage 1: External media resolver webhook if configured
+  if (shouldDownloadMedia && options?.reelId) {
+    resolvedMediaFilePath = await tryExternalMediaResolver(
+      options.reelId,
+      normalizedUrl,
+      mediaFormat === "mp4" ? "mp4" : "mp3"
+    );
+  }
+
+  // Stage 2: Auto-managed `yt-dlp` (downloads Reel audio/MP4 + extracts caption, handle & thumbnail!)
+  if (shouldDownloadMedia && !resolvedMediaFilePath && options?.reelId) {
+    const ytdlpResult = await downloadReelWithYtDlp(
+      options.reelId,
+      normalizedUrl,
+      mediaFormat === "mp4" ? "mp4" : "mp3"
+    );
+    resolvedMediaFilePath = ytdlpResult.mediaFilePath;
+    authorHandle = authorHandle ?? ytdlpResult.authorHandle;
+    caption = caption ?? ytdlpResult.caption;
+    thumbnailUrl = thumbnailUrl ?? ytdlpResult.thumbnailUrl;
+    if (ytdlpResult.failureReason) {
+      extractionHint = ytdlpResult.failureReason;
+    }
+  }
+
+  // Stage 3: Official Meta Graph API oEmbed (for metadata if still needed)
   if ((!caption || !authorHandle) && ENV.FACEBOOK_APP_ACCESS_TOKEN) {
     try {
       const params = new URLSearchParams({
@@ -504,16 +618,31 @@ export async function extractReelContent(
       } else if (!loggedOembedPermissionHint && ENV.NODE_ENV !== "test") {
         loggedOembedPermissionHint = true;
         console.info(
-          `[Extractor] Meta oEmbed returned ${response.status} (app may not have Live 'oEmbed Read' review yet) — using public embed & OpenGraph fallback.`
+          `[Extractor] Meta oEmbed returned ${response.status} — using yt-dlp / GraphQL / public embed fallback.`
         );
       }
     } catch {
-      // Continue to Stage 4
+      // Continue
     }
   }
 
-  // Stage 4: Instagram Public Embed Widget (`/p/<shortcode>/embed/captioned/`)
-  if (shortcode && (!caption || (!resolvedMediaFilePath && !options?.hasLocalMediaOrTranscript))) {
+  // Stage 4: Instagram Polaris GraphQL (`doc_id: 27130156389949648`)
+  if (
+    shortcode &&
+    (!caption || !authorHandle || (shouldDownloadMedia && !resolvedMediaFilePath))
+  ) {
+    const gql = await tryPolarisGraphQlExtraction(shortcode, normalizedUrl);
+    authorHandle = authorHandle ?? gql.authorHandle;
+    caption = caption ?? gql.caption;
+    thumbnailUrl = thumbnailUrl ?? gql.thumbnailUrl;
+    publicVideoUrl = publicVideoUrl ?? gql.publicVideoUrl;
+  }
+
+  // Stage 5: Instagram Public Embed Widget (`/p/<shortcode>/embed/captioned/`)
+  if (
+    shortcode &&
+    (!caption || !authorHandle || (shouldDownloadMedia && !resolvedMediaFilePath && !publicVideoUrl))
+  ) {
     const embedUrl = `https://www.instagram.com/p/${shortcode}/embed/captioned/`;
     try {
       const controller = new AbortController();
@@ -535,18 +664,18 @@ export async function extractReelContent(
         clearTimeout(timer);
       }
     } catch {
-      // Continue to Stage 5
+      // Continue
     }
   }
 
-  // Stage 5: Standard OpenGraph `<meta>` tags on public Reel URL
-  if (!caption || !authorHandle) {
+  // Stage 6: Social Crawler OpenGraph `<meta>` fallback
+  if (!caption || !authorHandle || !thumbnailUrl) {
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 10000);
       try {
         const pageRes = await fetch(normalizedUrl, {
-          headers: PUBLIC_EMBED_HEADERS,
+          headers: CRAWLER_OG_HEADERS,
           signal: controller.signal,
         });
         if (pageRes.ok) {
@@ -591,27 +720,18 @@ export async function extractReelContent(
     }
   }
 
-  // Stage 6: Resolve audio/video stream for Whisper transcription when available
+  // Stage 7: Download direct `publicVideoUrl` if `yt-dlp` hadn't already downloaded media
   if (
+    shouldDownloadMedia &&
     !resolvedMediaFilePath &&
-    options?.reelId &&
-    !options?.hasLocalMediaOrTranscript &&
-    ENV.ENABLE_VIDEO_TRANSCRIPTION
+    publicVideoUrl &&
+    options?.reelId
   ) {
-    if (publicVideoUrl) {
-      const { rawDir } = ensureUploadDirs();
-      resolvedMediaFilePath = await downloadStreamToFile(
-        publicVideoUrl,
-        path.join(rawDir, `${options.reelId}-embed.mp4`)
-      );
-    }
-
-    if (!resolvedMediaFilePath) {
-      resolvedMediaFilePath = await tryLocalYtDlpAudio(
-        options.reelId,
-        normalizedUrl
-      );
-    }
+    const { rawDir } = ensureUploadDirs();
+    resolvedMediaFilePath = await downloadStreamToFile(
+      publicVideoUrl,
+      path.join(rawDir, `${options.reelId}-direct.mp4`)
+    );
   }
 
   if (caption || authorHandle || thumbnailUrl) {
@@ -626,5 +746,6 @@ export async function extractReelContent(
     caption,
     thumbnailUrl,
     resolvedMediaFilePath,
+    extractionHint,
   };
 }

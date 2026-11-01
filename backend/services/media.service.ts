@@ -57,6 +57,7 @@ function parseDurationSeconds(stderrOutput: string): number | null {
 export interface ProcessedMediaResult {
   audioDiskPath: string | null;
   audioUrl: string | null;
+  videoUrl: string | null;
   thumbnailUrl: string | null;
   durationSec: number | null;
   hasAudio: boolean;
@@ -65,15 +66,18 @@ export interface ProcessedMediaResult {
 export function ensureUploadDirs(): {
   rawDir: string;
   audioDir: string;
+  videoDir: string;
   thumbsDir: string;
 } {
   const rawDir = path.join(ENV.UPLOADS_DIR, "raw");
   const audioDir = path.join(ENV.UPLOADS_DIR, "audio");
+  const videoDir = path.join(ENV.UPLOADS_DIR, "video");
   const thumbsDir = path.join(ENV.UPLOADS_DIR, "thumbs");
   fs.mkdirSync(rawDir, { recursive: true });
   fs.mkdirSync(audioDir, { recursive: true });
+  fs.mkdirSync(videoDir, { recursive: true });
   fs.mkdirSync(thumbsDir, { recursive: true });
-  return { rawDir, audioDir, thumbsDir };
+  return { rawDir, audioDir, videoDir, thumbsDir };
 }
 
 function isVideoFile(filePath: string, mimeType?: string): boolean {
@@ -83,16 +87,18 @@ function isVideoFile(filePath: string, mimeType?: string): boolean {
 }
 
 /**
- * Converts an uploaded MP4/video or audio file into an optimized 16kHz mono MP3
- * ready for speech-to-text transcription, extracts duration + optional video thumbnail,
- * and cleans up the raw temporary upload.
+ * Converts a downloaded or uploaded MP4/video or audio file into an optimized
+ * 16kHz mono MP3 ready for Whisper speech-to-text transcription, optionally
+ * preserves the MP4 video when `keepVideoMp4: true`, extracts duration + cover
+ * thumbnail, and cleans up temporary files.
  */
 export async function convertMediaToMp3(
   reelId: string,
   inputFilePath: string,
-  mimeType?: string
+  mimeType?: string,
+  options?: { keepVideoMp4?: boolean }
 ): Promise<ProcessedMediaResult> {
-  const { audioDir, thumbsDir } = ensureUploadDirs();
+  const { audioDir, videoDir, thumbsDir } = ensureUploadDirs();
   const ffmpegBin = resolveFfmpegPath();
 
   if (!ffmpegBin) {
@@ -100,11 +106,13 @@ export async function convertMediaToMp3(
   }
 
   const outputMp3Path = path.join(audioDir, `${reelId}.mp3`);
+  const outputMp4Path = path.join(videoDir, `${reelId}.mp4`);
   const outputThumbPath = path.join(thumbsDir, `${reelId}.jpg`);
   const videoInput = isVideoFile(inputFilePath, mimeType);
 
   let durationSec: number | null = null;
   let hasAudio = false;
+  let videoUrl: string | null = null;
   let thumbnailUrl: string | null = null;
 
   try {
@@ -115,7 +123,6 @@ export async function convertMediaToMp3(
         timeout: 15000,
       });
     } catch (err: unknown) {
-      // `ffmpeg -i <file>` with no output exits with code 1 and prints stream info to stderr
       probeStderr =
         (err as { stderr?: string })?.stderr ??
         (err instanceof Error ? err.message : "");
@@ -123,9 +130,46 @@ export async function convertMediaToMp3(
 
     durationSec = parseDurationSeconds(probeStderr);
     const streamHasAudio = /Stream #\d+:\d+.*Audio:/i.test(probeStderr);
+    const streamHasVideo = /Stream #\d+:\d+.*Video:/i.test(probeStderr);
 
-    // 2. Extract cover frame if input is a video
-    if (videoInput) {
+    // 2. Keep MP4 video if requested and input has a video stream
+    if (options?.keepVideoMp4 && (videoInput || streamHasVideo)) {
+      try {
+        if (path.extname(inputFilePath).toLowerCase() === ".mp4") {
+          fs.copyFileSync(inputFilePath, outputMp4Path);
+        } else {
+          await execFileAsync(
+            ffmpegBin,
+            [
+              "-y",
+              "-i",
+              inputFilePath,
+              "-c:v",
+              "libx264",
+              "-preset",
+              "veryfast",
+              "-c:a",
+              "aac",
+              "-movflags",
+              "+faststart",
+              outputMp4Path,
+            ],
+            { timeout: 120000 }
+          );
+        }
+        if (
+          fs.existsSync(outputMp4Path) &&
+          fs.statSync(outputMp4Path).size > 1024
+        ) {
+          videoUrl = `/uploads/video/${reelId}.mp4`;
+        }
+      } catch {
+        // Non-fatal if MP4 copy/remux fails; MP3 extraction still runs
+      }
+    }
+
+    // 3. Extract cover frame if input has video
+    if (videoInput || streamHasVideo) {
       try {
         await execFileAsync(
           ffmpegBin,
@@ -150,11 +194,11 @@ export async function convertMediaToMp3(
           thumbnailUrl = `/uploads/thumbs/${reelId}.jpg`;
         }
       } catch {
-        // Non-fatal if video has no decodable frame at 0.2s
+        // Non-fatal
       }
     }
 
-    // 3. Convert audio stream to 16kHz mono 64kbps MP3 for Whisper / STT
+    // 4. Convert audio stream to 16kHz mono 64kbps MP3 for Whisper / STT
     if (streamHasAudio || !videoInput) {
       try {
         const { stderr } = await execFileAsync(
@@ -202,14 +246,15 @@ export async function convertMediaToMp3(
     return {
       audioDiskPath: hasAudio ? outputMp3Path : null,
       audioUrl: hasAudio ? `/uploads/audio/${reelId}.mp3` : null,
+      videoUrl,
       thumbnailUrl,
       durationSec,
       hasAudio,
     };
   } finally {
-    // Always remove temporary raw upload if it differs from outputMp3Path
     if (
       path.resolve(inputFilePath) !== path.resolve(outputMp3Path) &&
+      path.resolve(inputFilePath) !== path.resolve(outputMp4Path) &&
       fs.existsSync(inputFilePath)
     ) {
       try {
@@ -222,9 +267,10 @@ export async function convertMediaToMp3(
 }
 
 export function deleteReelMediaFiles(reelId: string): void {
-  const { audioDir, thumbsDir } = ensureUploadDirs();
+  const { audioDir, videoDir, thumbsDir } = ensureUploadDirs();
   for (const file of [
     path.join(audioDir, `${reelId}.mp3`),
+    path.join(videoDir, `${reelId}.mp4`),
     path.join(thumbsDir, `${reelId}.jpg`),
   ]) {
     if (fs.existsSync(file)) {

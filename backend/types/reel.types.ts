@@ -1,10 +1,13 @@
 export type ReelStatus =
+  | "AWAITING_CONFIRMATION"
   | "PENDING"
   | "EXTRACTING"
   | "TRANSCRIBING"
   | "SUMMARIZING"
   | "DONE"
   | "FAILED";
+
+export type MediaFormatPreference = "mp3" | "mp4" | "skip";
 
 export interface Reel {
   id: string;
@@ -19,6 +22,7 @@ export interface Reel {
   keyPoints: string[];
   notes: string | null;
   audioUrl: string | null;
+  videoUrl: string | null;
   audioDurationSec: number | null;
   transcriptionSource: string | null;
   status: ReelStatus;
@@ -48,6 +52,12 @@ export interface CreateReelBody {
   transcript?: string;
   notes?: string;
   categoryName?: string;
+  mediaFormat?: MediaFormatPreference;
+  askBeforeConvert?: boolean | string;
+}
+
+export interface ConfirmConvertBody {
+  mediaFormat?: MediaFormatPreference;
 }
 
 export interface UpdateReelBody {
