@@ -3,6 +3,7 @@ import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
 import cookieParser from "cookie-parser";
+import fs from "fs";
 import path from "path";
 
 import { ENV } from "./config/env";
@@ -67,7 +68,15 @@ if (ENV.NODE_ENV !== "test") {
 // ─── Static Assets: Converted MP3/Thumbnails + Web Companion App ──────────
 app.use("/uploads", express.static(ENV.UPLOADS_DIR));
 
-const publicDir = path.resolve(__dirname, "public");
+const publicDirCandidates = [
+  path.resolve(__dirname, "public"),
+  path.resolve(__dirname, "../public"),
+  path.resolve(process.cwd(), "public"),
+];
+const publicDir =
+  publicDirCandidates.find((dir) =>
+    fs.existsSync(path.join(dir, "index.html"))
+  ) ?? publicDirCandidates[0];
 app.use(express.static(publicDir));
 
 // ─── API Rate Limiting & Routes (disable ETag/caching so live polling is fresh) ─

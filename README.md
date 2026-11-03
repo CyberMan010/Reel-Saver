@@ -74,6 +74,9 @@ flutter pub get
 flutter run --dart-define=API_BASE_URL=http://10.0.2.2:4000
 ```
 
+### 4. Put Reel-Saver Online for Free (Zero Credit Card)
+Ready-to-deploy configs are included for **Hugging Face Spaces (16 GB RAM Free Docker)**, **Render.com (`render.yaml` Free Blueprint)**, and **Cloudflare Quick Tunnel (`backend\start-online-tunnel.bat`, 0 bytes on `C:`)** — see **[DEPLOY.md](./DEPLOY.md)** for 2-minute setup steps.
+
 ---
 
 ## Key API Endpoints

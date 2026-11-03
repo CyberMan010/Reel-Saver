@@ -1,22 +1,32 @@
 FROM node:22-bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     ffmpeg \
     python3 \
     python3-pip \
-  && pip3 install --break-system-packages --no-cache-dir faster-whisper \
+  && pip3 install --break-system-packages --no-cache-dir "yt-dlp[default,curl-cffi]" \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --omit=dev || npm install
+RUN npm ci --include=dev || npm install --include=dev
 
 COPY . .
-RUN npm run build:server
+RUN npm run build && npm prune --omit=dev
 
-EXPOSE 4000
+RUN mkdir -p /app/data/whisper-models /app/data/bin /app/uploads/raw /app/uploads/audio /app/uploads/video /app/uploads/thumbs /app/uploads/tmp \
+  && chown -R node:node /app
+
+USER node
+
+ENV NODE_ENV=production
 ENV HOST=0.0.0.0
-ENV PORT=4000
+ENV PORT=7860
+ENV FFMPEG_PATH=/usr/bin/ffmpeg
+ENV YTDLP_AUTO_DOWNLOAD=false
 
-CMD ["npm", "start"]
+EXPOSE 7860
+
+CMD ["node", "dist/server.js"]
