@@ -139,7 +139,7 @@ async function run() {
     ]);
     assert.ok(fs.existsSync(sampleMp4Path), "Sample MP4 must exist");
 
-    // 4a. Verify `askBeforeConvert: true` pauses in AWAITING_CONFIRMATION until confirmed
+    // 4a. Verify `askBeforeConvert: true` pauses in AWAITING_CONFIRMATION, then auto-converts to MP3 & transcribes on confirmation
     const askRes = await fetch(`${baseUrl}/api/reels`, {
       method: "POST",
       headers: {
@@ -147,8 +147,7 @@ async function run() {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        sourceUrl: "https://www.instagram.com/reel/C8AskFirst123/",
-        caption: "Quick mobility routine for lower back relief in 5 minutes",
+        sourceUrl: "https://www.instagram.com/reel/DEMO_CHICKEN_01/",
         askBeforeConvert: true,
       }),
     });
@@ -170,10 +169,34 @@ async function run() {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ mediaFormat: "skip" }),
+        body: JSON.stringify({ mediaFormat: "mp3" }),
       }
     );
     assert.strictEqual(confirmRes.status, 202);
+
+    let confirmedReel: Record<string, unknown> | null = null;
+    for (let attempt = 0; attempt < 30; attempt++) {
+      await sleep(250);
+      const pRes = await fetch(`${baseUrl}/api/reels/${askJson.data.reel.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const pJson = (await pRes.json()) as {
+        data: { reel: Record<string, unknown> };
+      };
+      if (pJson.data.reel.status === "DONE") {
+        confirmedReel = pJson.data.reel;
+        break;
+      }
+    }
+    assert.ok(confirmedReel, "Confirmed demo reel should reach DONE");
+    assert.ok(
+      String(confirmedReel.audioUrl).endsWith(".mp3"),
+      "Confirmed demo reel must auto-convert to MP3"
+    );
+    assert.ok(
+      String(confirmedReel.transcript).includes("46 grams of protein"),
+      "Confirmed demo reel must produce full spoken voice transcript"
+    );
     await fetch(`${baseUrl}/api/reels/${askJson.data.reel.id}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },

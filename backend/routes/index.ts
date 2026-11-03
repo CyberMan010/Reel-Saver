@@ -4,6 +4,7 @@ import reelsRoutes from "./reels.routes";
 import categoriesRoutes from "./categories.routes";
 import { ENV } from "../config/env";
 import { isRedisQueueActive } from "../jobs/reels.queue";
+import { DEMO_REEL_PRESETS } from "../services/demo.service";
 import { isFfmpegAvailable } from "../services/media.service";
 import { isYtDlpInstalledSync } from "../services/ytdlp.service";
 import {
@@ -71,6 +72,13 @@ router.get("/system/capabilities", async (_req, res) => {
       },
       ipProtectionMode:
         "client-edge-metadata + direct-mp4-mp3-upload + official-oembed",
+      demoPresets: DEMO_REEL_PRESETS.map((p) => ({
+        shortcode: p.shortcode,
+        url: p.url,
+        badge: p.badge,
+        authorHandle: p.authorHandle,
+        caption: p.caption,
+      })),
     },
   });
 });

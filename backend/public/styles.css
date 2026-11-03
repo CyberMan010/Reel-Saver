@@ -617,6 +617,99 @@ textarea {
   color: #fbbf24;
 }
 
+.demo-hero-btn {
+  background: linear-gradient(135deg, #6366f1, #ec4899);
+  border: none;
+  color: #fff;
+  font-weight: 700;
+  padding: 13px 16px;
+  border-radius: 11px;
+  cursor: pointer;
+  font-size: 14.5px;
+  box-shadow: 0 10px 28px rgba(99, 102, 241, 0.35);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.demo-hero-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 32px rgba(236, 72, 153, 0.4);
+}
+
+.demo-studio-bar {
+  background: linear-gradient(
+    135deg,
+    rgba(99, 102, 241, 0.13),
+    rgba(236, 72, 153, 0.09)
+  );
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  border-radius: 14px;
+  padding: 14px 18px;
+  margin-bottom: 20px;
+}
+
+.demo-studio-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.demo-preset-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.demo-pill-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 7px 12px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+}
+
+.demo-pill-btn:hover {
+  border-color: var(--primary);
+  background: rgba(99, 102, 241, 0.16);
+  transform: translateY(-1px);
+}
+
+.pipeline-stepper {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.pipeline-step {
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  padding: 5px 6px;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.pipeline-step.active {
+  border-color: var(--primary);
+  background: rgba(99, 102, 241, 0.2);
+  color: #c7d2fe;
+}
+
+.pipeline-step.done {
+  border-color: rgba(16, 185, 129, 0.45);
+  background: rgba(16, 185, 129, 0.14);
+  color: #6ee7b7;
+}
+
 .toast {
   position: fixed;
   bottom: 22px;
