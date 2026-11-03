@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { ENV } from "../config/env";
+import { generateDemoReelMp4, getDemoPresetByUrl } from "./demo.service";
 import { ensureUploadDirs } from "./media.service";
 import { downloadReelWithYtDlp } from "./ytdlp.service";
 
@@ -33,6 +34,7 @@ export interface ExtractedMetadata {
   caption: string | null;
   thumbnailUrl: string | null;
   resolvedMediaFilePath?: string | null;
+  demoSpokenTranscript?: string | null;
   extractionHint?: string | null;
 }
 
@@ -524,6 +526,28 @@ export async function extractReelContent(
       caption: options?.existingCaption ?? null,
       thumbnailUrl: options?.existingThumbnailUrl ?? null,
       resolvedMediaFilePath: null,
+      extractionHint: null,
+    };
+  }
+
+  // Interactive Live Demo Reel preset (`DEMO_*` shortcodes):
+  // Synthesizes a genuine 9:16 MP4 video + AAC audio via FFmpeg so the full
+  // MP4 -> 16kHz MP3 conversion, thumbnailing, voice-to-text & AI summary run live!
+  const demoPreset = getDemoPresetByUrl(sourceUrl);
+  if (demoPreset) {
+    const mediaFormat: MediaConversionChoice = options?.mediaFormat ?? "mp3";
+    const resolvedMediaFilePath =
+      options?.reelId && !options?.hasLocalMedia && mediaFormat !== "skip"
+        ? await generateDemoReelMp4(options.reelId, demoPreset)
+        : null;
+
+    return {
+      authorHandle: options?.existingAuthorHandle ?? demoPreset.authorHandle,
+      caption: options?.existingCaption ?? demoPreset.caption,
+      thumbnailUrl: options?.existingThumbnailUrl ?? null,
+      resolvedMediaFilePath,
+      demoSpokenTranscript:
+        mediaFormat === "skip" ? null : demoPreset.spokenTranscript,
       extractionHint: null,
     };
   }

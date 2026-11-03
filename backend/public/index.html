@@ -21,6 +21,12 @@
         Share an Instagram Reel link or upload MP4/MP3 — auto-convert to audio, transcribe for free, summarize, and organize in editable categories.
       </p>
 
+      <button id="quickDemoBtn" class="demo-hero-btn btn-block" type="button" style="margin-bottom:16px;">
+        🚀 Launch Interactive Live Demo (1-Click)
+      </button>
+
+      <div class="divider">OR SIGN IN WITH YOUR ACCOUNT</div>
+
       <div class="tabs">
         <button id="tabLogin" class="tab-btn active" type="button">Sign In</button>
         <button id="tabRegister" class="tab-btn" type="button">Create Account</button>
@@ -39,16 +45,10 @@
           <label for="authPassword">Password</label>
           <input id="authPassword" type="password" placeholder="Min 8 chars, A-z, 0-9, symbol" required />
         </div>
-        <button id="authSubmitBtn" class="btn btn-primary btn-block" type="submit">
+        <button id="authSubmitBtn" class="btn btn-secondary btn-block" type="submit">
           Sign In
         </button>
       </form>
-
-      <div class="divider">OR INSTANT PREVIEW</div>
-
-      <button id="quickDemoBtn" class="btn btn-secondary btn-block" type="button">
-        Launch Instant Demo Workspace (With Sample Reels)
-      </button>
     </div>
   </div>
 
@@ -106,6 +106,19 @@
           </select>
         </div>
       </div>
+
+      <!-- Interactive Live Demo Studio Bar -->
+      <section id="demoStudioBar" class="demo-studio-bar">
+        <div class="demo-studio-header">
+          <div>
+            <strong style="font-size:14px;">🎬 Live Demo Studio — Try a Reel End-to-End</strong>
+            <span style="font-size:12.5px;color:var(--text-muted);margin-left:6px;">
+              Click any sample Reel below: it will <strong>ask you first</strong> (MP3 vs MP4+MP3), run real FFmpeg conversion, transcribe the voice to text, summarize &amp; auto-categorize!
+            </span>
+          </div>
+        </div>
+        <div id="demoPresetPills" class="demo-preset-pills"></div>
+      </section>
 
       <div id="reelsContainer" class="reels-grid"></div>
     </main>
@@ -283,7 +296,12 @@
         </div>
 
         <div class="form-group">
-          <label for="editTranscript">Full Transcript (Editable)</label>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">
+            <label for="editTranscript" style="margin-bottom:0;">Full Voice Transcript (Editable)</label>
+            <button id="speakTranscriptBtn" class="btn btn-secondary btn-sm" type="button" style="padding:4px 10px;font-size:12px;">
+              🔊 Read Transcript Aloud
+            </button>
+          </div>
           <textarea id="editTranscript" rows="4"></textarea>
         </div>
 

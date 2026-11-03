@@ -156,30 +156,21 @@
       }
       saveSession(authRes.data.user, authRes.data.tokens);
 
-      // Seed starter reels if library is empty
+      // Seed interactive live demo reels (real FFmpeg MP3/MP4 + 1 AWAITING_CONFIRMATION reel!)
       const existing = await apiFetch("/api/reels");
       if ((existing.data?.reels || []).length === 0) {
         const samples = [
           {
-            sourceUrl: "https://www.instagram.com/reel/C9GarlicChicken01/",
-            authorHandle: "chef.kareem",
-            caption: "15-minute Honey Garlic Crispy Chicken Bowl! High protein meal prep.",
-            transcript:
-              "Start with 500 grams of diced chicken breast seasoned with salt, black pepper, paprika, and a tablespoon of cornstarch so it gets super crispy. Sear on high heat for 5 minutes. Lower the heat and add 3 minced garlic cloves, two tablespoons of soy sauce, one tablespoon of honey, and a squeeze of lemon juice. Toss until glossy and serve over jasmine rice — 46 grams of protein per bowl.",
+            sourceUrl: "https://www.instagram.com/reel/DEMO_CHICKEN_01/",
+            mediaFormat: "mp3",
           },
           {
-            sourceUrl: "https://www.instagram.com/reel/C9FlutterShare02/",
-            authorHandle: "dev.tariq",
-            caption: "How to handle Android & iOS Share Sheet intents cleanly in Flutter without blocking the UI thread.",
-            transcript:
-              "When building a Flutter app that receives shared links or MP4 videos from Instagram, register ACTION_SEND in your AndroidManifest for both text/plain and video/* MIME types. Extract public OpenGraph preview tags directly on the user's phone first so your backend IP never gets rate-limited, then upload the audio clip to your queue worker for background Whisper transcription.",
+            sourceUrl: "https://www.instagram.com/reel/DEMO_ARABIC_04/",
+            mediaFormat: "mp4",
           },
           {
-            sourceUrl: "https://www.instagram.com/reel/C9MobilityFlow03/",
-            authorHandle: "coach.layla",
-            caption: "5-minute daily hip & thoracic mobility routine if you sit at a desk all day.",
-            transcript:
-              "If your lower back feels tight after coding all day, do these three moves every evening: 90-90 hip switches for 10 slow reps, world's greatest lunge stretch with thoracic rotation for 6 reps per side, and deep squat pry holds for 45 seconds.",
+            sourceUrl: "https://www.instagram.com/reel/DEMO_FITNESS_03/",
+            askBeforeConvert: true,
           },
         ];
 
@@ -191,13 +182,13 @@
         }
       }
 
-      showToast("Demo workspace ready!");
+      showToast("Live Demo ready! Try converting & transcribing any Reel.");
       await enterDashboard();
     } catch (err) {
       showToast(err.message);
     } finally {
       btn.disabled = false;
-      btn.textContent = "Launch Instant Demo Workspace (With Sample Reels)";
+      btn.textContent = "🚀 Launch Interactive Live Demo (1-Click)";
     }
   });
 
@@ -242,6 +233,54 @@
         ? `● FFmpeg Ready · ${dbLabel}`
         : `● Pipeline Active · ${dbLabel}`;
       $("sysStatusDetails").textContent = `STT: ${sttLabel} · No Docker Needed`;
+
+      // Render 1-Click Live Demo Preset Pills
+      const pillsEl = $("demoPresetPills");
+      if (pillsEl && Array.isArray(d.demoPresets)) {
+        pillsEl.innerHTML =
+          d.demoPresets
+            .map(
+              (preset) =>
+                `<button type="button" class="demo-pill-btn" data-demo-url="${escapeAttr(
+                  preset.url
+                )}">${escapeHtml(preset.badge)}</button>`
+            )
+            .join("") +
+          `<button type="button" class="demo-pill-btn" id="demoCustomLinkBtn">+ Paste Your Own Link / MP4</button>`;
+
+        pillsEl.querySelectorAll("[data-demo-url]").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const url = btn.getAttribute("data-demo-url");
+            if (!url) return;
+            // Asks BEFORE auto-converting to MP3/MP4 and transcribing!
+            const choice = await askBeforeConvertingModal({
+              urlLabel: url,
+              showSkipOption: true,
+            });
+            if (!choice) return;
+            try {
+              await apiFetch("/api/reels", {
+                method: "POST",
+                body: JSON.stringify({
+                  sourceUrl: url,
+                  mediaFormat: choice,
+                }),
+              });
+              showToast(
+                choice === "skip"
+                  ? "Extracting caption & summarizing..."
+                  : `Auto-converting Reel to ${choice.toUpperCase()} & transcribing voice to text...`
+              );
+              await Promise.all([loadReels(), loadCategories()]);
+            } catch (err) {
+              showToast(err.message);
+            }
+          });
+        });
+
+        const customBtn = $("demoCustomLinkBtn");
+        if (customBtn) customBtn.addEventListener("click", openAddModal);
+      }
     } catch {
       $("sysStatusDetails").textContent = "Connected to Reel-Saver API";
     }
@@ -391,7 +430,7 @@
     if (anyProcessing && !pollInterval) {
       pollInterval = setInterval(async () => {
         await Promise.all([loadReels(), loadCategories()]);
-      }, 2000);
+      }, 900);
     } else if (!anyProcessing && pollInterval) {
       clearInterval(pollInterval);
       pollInterval = null;
@@ -555,6 +594,27 @@
               reel.status
             ));
 
+        const isActivelyRunning = [
+          "PENDING",
+          "EXTRACTING",
+          "TRANSCRIBING",
+          "SUMMARIZING",
+        ].includes(reel.status);
+
+        const step1State =
+          reel.status === "EXTRACTING" || reel.status === "PENDING"
+            ? "active"
+            : reel.status === "TRANSCRIBING" || reel.status === "SUMMARIZING"
+            ? "done"
+            : "";
+        const step2State =
+          reel.status === "TRANSCRIBING"
+            ? "active"
+            : reel.status === "SUMMARIZING"
+            ? "done"
+            : "";
+        const step3State = reel.status === "SUMMARIZING" ? "active" : "";
+
         return `
           <article class="reel-card" data-reel-id="${escapeAttr(reel.id)}">
             <div class="reel-card-top">
@@ -565,6 +625,15 @@
             </div>
             <div class="reel-title">${escapeHtml(title)}</div>
             <div class="reel-summary">${escapeHtml(summary)}</div>
+            ${
+              isActivelyRunning
+                ? `<div class="pipeline-stepper">
+                    <div class="pipeline-step ${step1State}">① MP4→MP3</div>
+                    <div class="pipeline-step ${step2State}">② Voice→Text</div>
+                    <div class="pipeline-step ${step3State}">③ AI Summary</div>
+                  </div>`
+                : ""
+            }
             ${
               points.length > 0
                 ? `<ul class="reel-keypoints-preview">${points
@@ -897,10 +966,39 @@
   function closeDetailModal() {
     $("detailAudioPlayer").pause();
     $("detailVideoPlayer").pause();
+    if ("speechSynthesis" in window && window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+      $("speakTranscriptBtn").textContent = "🔊 Read Transcript Aloud";
+    }
     $("detailModal").classList.add("hidden");
   }
 
   $("closeDetailBtn").addEventListener("click", closeDetailModal);
+
+  $("speakTranscriptBtn").addEventListener("click", () => {
+    const text = $("editTranscript").value.trim();
+    if (!text) {
+      showToast("No transcript text to read aloud yet.");
+      return;
+    }
+    if (!("speechSynthesis" in window)) {
+      showToast("Browser speech synthesis is not supported here.");
+      return;
+    }
+    if (window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+      $("speakTranscriptBtn").textContent = "🔊 Read Transcript Aloud";
+      return;
+    }
+    const utter = new SpeechSynthesisUtterance(text);
+    const hasArabic = /[\u0600-\u06FF]/.test(text);
+    utter.lang = hasArabic ? "ar-JO" : "en-US";
+    utter.onend = () => {
+      $("speakTranscriptBtn").textContent = "🔊 Read Transcript Aloud";
+    };
+    $("speakTranscriptBtn").textContent = "⏹ Stop Reading";
+    window.speechSynthesis.speak(utter);
+  });
 
   $("editReelForm").addEventListener("submit", async (e) => {
     e.preventDefault();

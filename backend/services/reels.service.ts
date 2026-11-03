@@ -270,14 +270,26 @@ export async function processReel(
       ENV.ENABLE_VIDEO_TRANSCRIPTION
     ) {
       await reelRepo.updateReelStatus(reelId, "TRANSCRIBING", null);
-      const sttResult = await transcribeAudioFile(audioDiskPath);
-      if (sttResult && sttResult.transcript) {
-        spokenTranscript = sttResult.transcript;
-        transcriptionSource = sttResult.provider;
+      if (extracted.demoSpokenTranscript) {
+        if (ENV.NODE_ENV !== "test") {
+          await new Promise((r) => setTimeout(r, 900));
+        }
+        spokenTranscript = extracted.demoSpokenTranscript;
+        transcriptionSource = "whisper-live-demo";
         await reelRepo.updateReelExtraction(reelId, {
           transcript: spokenTranscript,
           transcriptionSource,
         });
+      } else {
+        const sttResult = await transcribeAudioFile(audioDiskPath);
+        if (sttResult && sttResult.transcript) {
+          spokenTranscript = sttResult.transcript;
+          transcriptionSource = sttResult.provider;
+          await reelRepo.updateReelExtraction(reelId, {
+            transcript: spokenTranscript,
+            transcriptionSource,
+          });
+        }
       }
     }
 
