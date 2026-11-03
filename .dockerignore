@@ -1,0 +1,10 @@
+node_modules
+**/node_modules
+backend/dist
+backend/data
+backend/uploads
+flutter_app
+.git
+.env
+backend/.env
+*.log
