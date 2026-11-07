@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/category_model.dart';
+import '../models/reel_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/reels_provider.dart';
 import '../services/share_intent_service.dart';
 import 'add_reel_sheet.dart';
+import 'onboarding_guide_sheet.dart';
 import 'reel_detail_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -15,19 +18,40 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  static const String _bannerDismissedKey = 'rs_flutter_banner_dismissed_v1';
+
   final ShareIntentService _shareService = ShareIntentService();
   final TextEditingController _searchCtrl = TextEditingController();
+  bool _showQuickGuideBanner = true;
 
   @override
   void initState() {
     super.initState();
+    _loadBannerPref();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<ReelsProvider>().refreshAll();
+      OnboardingGuideSheet.maybeShowForNewUser(context);
       _shareService.startListening((payload) {
         if (!mounted) return;
         _openAddSheet(initialShare: payload);
       });
     });
+  }
+
+  Future<void> _loadBannerPref() async {
+    final prefs = await SharedPreferences.getInstance();
+    final dismissed = prefs.getBool(_bannerDismissedKey) ?? false;
+    if (mounted) {
+      setState(() => _showQuickGuideBanner = !dismissed);
+    }
+  }
+
+  Future<void> _dismissQuickGuideBanner() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_bannerDismissedKey, true);
+    if (mounted) {
+      setState(() => _showQuickGuideBanner = false);
+    }
   }
 
   @override
@@ -72,9 +96,7 @@ class _HomeScreenState extends State<HomeScreen> {
         nextName.isNotEmpty &&
         nextName != category.name &&
         mounted) {
-      await context
-          .read<ReelsProvider>()
-          .renameCategory(category.id, nextName);
+      await context.read<ReelsProvider>().renameCategory(category.id, nextName);
     }
   }
 
@@ -156,8 +178,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           IconButton(
                             tooltip: 'Delete category',
                             icon: const Icon(Icons.delete_outline),
-                            onPressed: () =>
-                                provider.deleteCategory(cat.id),
+                            onPressed: () => provider.deleteCategory(cat.id),
                           ),
                         ],
                       ),
@@ -172,6 +193,62 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildFormattedPointsPreview(ReelModel reel) {
+    if (reel.keyPoints.isEmpty) return const SizedBox.shrink();
+    final preview = reel.keyPoints.take(2).toList();
+
+    if (reel.summaryStyle == 'paragraph') {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: preview
+              .map(
+                (p) => Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.indigo.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                  child: Text(
+                    '✦ $p',
+                    style: const TextStyle(fontSize: 11.5),
+                  ),
+                ),
+              )
+              .toList(),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: List.generate(preview.length, (idx) {
+          final prefix = reel.summaryStyle == 'numbered'
+              ? '${idx + 1}. '
+              : reel.summaryStyle == 'checklist'
+                  ? '☐ '
+                  : '• ';
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 3),
+            child: Text(
+              '$prefix${preview[idx]}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12.5, color: Colors.white70),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final reelsProvider = context.watch<ReelsProvider>();
@@ -180,6 +257,11 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Reel-Saver Library'),
         actions: [
+          IconButton(
+            tooltip: 'How It Works (User Guide)',
+            icon: const Icon(Icons.help_outline_rounded),
+            onPressed: () => OnboardingGuideSheet.show(context),
+          ),
           IconButton(
             tooltip: 'Manage & Rename Categories',
             icon: const Icon(Icons.folder_copy_outlined),
@@ -199,8 +281,41 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Column(
         children: [
+          if (_showQuickGuideBanner)
+            Container(
+              margin: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.indigo.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.indigoAccent.withValues(alpha: 0.35),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.tips_and_updates_outlined, size: 20),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      'Share a Reel → Confirm MP3/MP4 → Get a brief summary in Bullets, Steps, Checklist, or Paragraph!',
+                      style: TextStyle(fontSize: 12.5),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => OnboardingGuideSheet.show(context),
+                    child: const Text('Guide'),
+                  ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _dismissQuickGuideBanner,
+                    icon: const Icon(Icons.close, size: 17),
+                  ),
+                ],
+              ),
+            ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
             child: TextField(
               controller: _searchCtrl,
               onChanged: reelsProvider.setSearchQuery,
@@ -234,8 +349,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       child: ChoiceChip(
                         label: Text('${cat.name} (${cat.reelCount})'),
                         selected: reelsProvider.selectedCategoryId == cat.id,
-                        onSelected: (_) =>
-                            reelsProvider.selectCategory(cat.id),
+                        onSelected: (_) => reelsProvider.selectCategory(cat.id),
                       ),
                     ),
                   ),
@@ -249,14 +363,26 @@ class _HomeScreenState extends State<HomeScreen> {
               onRefresh: reelsProvider.refreshAll,
               child: reelsProvider.reels.isEmpty
                   ? ListView(
-                      children: const [
-                        SizedBox(height: 100),
+                      children: [
+                        const SizedBox(height: 80),
                         Center(
                           child: Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 32),
-                            child: Text(
-                              'No saved Reels yet. Tap "Share" inside Instagram and choose Reel Saver, or tap "+ Share Link / MP4" below!',
-                              textAlign: TextAlign.center,
+                            padding: const EdgeInsets.symmetric(horizontal: 32),
+                            child: Column(
+                              children: [
+                                const Text(
+                                  'No saved Reels yet. Tap "Share" inside Instagram and choose Reel-Saver, or tap "+ Share Link / MP4" below!',
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 14),
+                                OutlinedButton.icon(
+                                  onPressed: () =>
+                                      OnboardingGuideSheet.show(context),
+                                  icon:
+                                      const Icon(Icons.help_outline_rounded),
+                                  label: const Text('See 4-Step Guide'),
+                                ),
+                              ],
                             ),
                           ),
                         ),
@@ -285,11 +411,29 @@ class _HomeScreenState extends State<HomeScreen> {
                                     mainAxisAlignment:
                                         MainAxisAlignment.spaceBetween,
                                     children: [
-                                      Chip(
-                                        label: Text(
-                                          reel.category?.name ?? 'Uncategorized',
-                                        ),
-                                        visualDensity: VisualDensity.compact,
+                                      Wrap(
+                                        spacing: 6,
+                                        children: [
+                                          Chip(
+                                            label: Text(
+                                              reel.category?.name ??
+                                                  'Uncategorized',
+                                            ),
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                          ),
+                                          if (reel.status == 'DONE')
+                                            Chip(
+                                              label: Text(
+                                                reel.summaryStyleLabel,
+                                                style: const TextStyle(
+                                                  fontSize: 11.5,
+                                                ),
+                                              ),
+                                              visualDensity:
+                                                  VisualDensity.compact,
+                                            ),
+                                        ],
                                       ),
                                       Text(
                                         reel.status,
@@ -323,6 +467,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     maxLines: 3,
                                     overflow: TextOverflow.ellipsis,
                                   ),
+                                  _buildFormattedPointsPreview(reel),
                                   if (reel.audioUrl != null) ...[
                                     const SizedBox(height: 8),
                                     const Row(

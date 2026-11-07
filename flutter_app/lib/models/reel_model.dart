@@ -7,7 +7,7 @@ class ReelCategoryRef {
   factory ReelCategoryRef.fromJson(Map<String, dynamic> json) {
     return ReelCategoryRef(
       id: json['id']?.toString() ?? '',
-      name: json['name']?.toString() ?? '',
+      name: json['name']?.toString() ?? 'Uncategorized',
     );
   }
 }
@@ -22,8 +22,10 @@ class ReelModel {
   final String? transcript;
   final String? summary;
   final List<String> keyPoints;
+  final String summaryStyle;
   final String? notes;
   final String? audioUrl;
+  final String? videoUrl;
   final double? audioDurationSec;
   final String? transcriptionSource;
   final String status;
@@ -31,7 +33,6 @@ class ReelModel {
   final String? categoryId;
   final ReelCategoryRef? category;
   final String createdAt;
-  final String? processedAt;
 
   const ReelModel({
     required this.id,
@@ -42,9 +43,11 @@ class ReelModel {
     this.thumbnailUrl,
     this.transcript,
     this.summary,
-    this.keyPoints = const [],
+    required this.keyPoints,
+    this.summaryStyle = 'bullets',
     this.notes,
     this.audioUrl,
+    this.videoUrl,
     this.audioDurationSec,
     this.transcriptionSource,
     required this.status,
@@ -52,14 +55,38 @@ class ReelModel {
     this.categoryId,
     this.category,
     required this.createdAt,
-    this.processedAt,
   });
 
-  bool get isProcessing =>
-      status == 'PENDING' ||
-      status == 'EXTRACTING' ||
-      status == 'TRANSCRIBING' ||
-      status == 'SUMMARIZING';
+  bool get isProcessing => const {
+        'PENDING',
+        'EXTRACTING',
+        'TRANSCRIBING',
+        'SUMMARIZING',
+      }.contains(status);
+
+  String get summaryStyleLabel {
+    switch (summaryStyle) {
+      case 'numbered':
+        return '1. Steps';
+      case 'checklist':
+        return '☑ Checklist';
+      case 'paragraph':
+        return '¶ Paragraph';
+      case 'bullets':
+      default:
+        return '• Bullets';
+    }
+  }
+
+  static String normalizeStyle(String? raw) {
+    if (raw == 'bullets' ||
+        raw == 'numbered' ||
+        raw == 'checklist' ||
+        raw == 'paragraph') {
+      return raw!;
+    }
+    return 'bullets';
+  }
 
   factory ReelModel.fromJson(Map<String, dynamic> json) {
     final rawPoints = json['keyPoints'];
@@ -70,25 +97,28 @@ class ReelModel {
     return ReelModel(
       id: json['id']?.toString() ?? '',
       sourceUrl: json['sourceUrl']?.toString() ?? '',
-      title: json['title'] as String?,
-      authorHandle: json['authorHandle'] as String?,
-      caption: json['caption'] as String?,
-      thumbnailUrl: json['thumbnailUrl'] as String?,
-      transcript: json['transcript'] as String?,
-      summary: json['summary'] as String?,
+      title: json['title']?.toString(),
+      authorHandle: json['authorHandle']?.toString(),
+      caption: json['caption']?.toString(),
+      thumbnailUrl: json['thumbnailUrl']?.toString(),
+      transcript: json['transcript']?.toString(),
+      summary: json['summary']?.toString(),
       keyPoints: points,
-      notes: json['notes'] as String?,
-      audioUrl: json['audioUrl'] as String?,
-      audioDurationSec: (json['audioDurationSec'] as num?)?.toDouble(),
-      transcriptionSource: json['transcriptionSource'] as String?,
+      summaryStyle: normalizeStyle(json['summaryStyle']?.toString()),
+      notes: json['notes']?.toString(),
+      audioUrl: json['audioUrl']?.toString(),
+      videoUrl: json['videoUrl']?.toString(),
+      audioDurationSec: (json['audioDurationSec'] is num)
+          ? (json['audioDurationSec'] as num).toDouble()
+          : null,
+      transcriptionSource: json['transcriptionSource']?.toString(),
       status: json['status']?.toString() ?? 'PENDING',
-      errorMessage: json['errorMessage'] as String?,
-      categoryId: json['categoryId'] as String?,
+      errorMessage: json['errorMessage']?.toString(),
+      categoryId: json['categoryId']?.toString(),
       category: json['category'] is Map<String, dynamic>
           ? ReelCategoryRef.fromJson(json['category'] as Map<String, dynamic>)
           : null,
       createdAt: json['createdAt']?.toString() ?? '',
-      processedAt: json['processedAt'] as String?,
     );
   }
 }

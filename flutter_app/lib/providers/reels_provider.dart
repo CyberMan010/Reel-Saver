@@ -103,6 +103,7 @@ class ReelsProvider extends ChangeNotifier {
     String? categoryName,
     String? notes,
     String mediaFormat = 'mp3',
+    String summaryStyle = 'bullets',
   }) async {
     var resolvedAuthor = authorHandle?.trim();
     var resolvedCaption = caption?.trim();
@@ -135,6 +136,7 @@ class ReelsProvider extends ChangeNotifier {
         'categoryName': categoryName.trim(),
       if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
       'mediaFormat': mediaFormat,
+      'summaryStyle': summaryStyle,
     };
 
     final res = await apiClient.multipartPost(
@@ -156,6 +158,7 @@ class ReelsProvider extends ChangeNotifier {
     String? authorHandle,
     String? summary,
     List<String>? keyPoints,
+    String? summaryStyle,
     String? transcript,
     String? notes,
     String? categoryName,
@@ -169,6 +172,7 @@ class ReelsProvider extends ChangeNotifier {
         if (authorHandle != null) 'authorHandle': authorHandle,
         if (summary != null) 'summary': summary,
         if (keyPoints != null) 'keyPoints': keyPoints,
+        if (summaryStyle != null) 'summaryStyle': summaryStyle,
         if (transcript != null) 'transcript': transcript,
         if (notes != null) 'notes': notes,
         if (categoryName != null) 'categoryName': categoryName,

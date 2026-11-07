@@ -169,7 +169,10 @@ async function run() {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ mediaFormat: "mp3" }),
+        body: JSON.stringify({
+          mediaFormat: "mp3",
+          summaryStyle: "numbered",
+        }),
       }
     );
     assert.strictEqual(confirmRes.status, 202);
@@ -189,6 +192,11 @@ async function run() {
       }
     }
     assert.ok(confirmedReel, "Confirmed demo reel should reach DONE");
+    assert.strictEqual(
+      confirmedReel.summaryStyle,
+      "numbered",
+      "Confirmed demo reel must persist chosen summaryStyle"
+    );
     assert.ok(
       String(confirmedReel.audioUrl).endsWith(".mp3"),
       "Confirmed demo reel must auto-convert to MP3"
@@ -197,6 +205,71 @@ async function run() {
       String(confirmedReel.transcript).includes("46 grams of protein"),
       "Confirmed demo reel must produce full spoken voice transcript"
     );
+    const demoSummaryWords = String(confirmedReel.summary)
+      .trim()
+      .split(/\s+/).length;
+    const demoPoints = confirmedReel.keyPoints as string[];
+    assert.ok(
+      demoSummaryWords <= 35,
+      `Summary must be brief (<=35 words), got ${demoSummaryWords}: "${confirmedReel.summary}"`
+    );
+    assert.ok(
+      Array.isArray(demoPoints) && demoPoints.length >= 3,
+      `Expected >=3 structured points, got ${JSON.stringify(demoPoints)}`
+    );
+    for (const pt of demoPoints) {
+      assert.ok(
+        pt.split(/\s+/).length <= 18,
+        `Each key point must be concise (<=18 words), got: "${pt}"`
+      );
+    }
+
+    // Verify unpunctuated ASR spoken transcript + filler compression & style switching
+    const { summarizeHeuristically } = await import("../services/ai.service");
+    const unpunctuatedAsr = summarizeHeuristically({
+      spokenTranscript:
+        "Hey guys today we are making high protein overnight oats First mix half cup rolled oats with one scoop vanilla protein powder Second stir in chia seeds and almond milk Finally top with berries and chill overnight",
+      summaryStyle: "checklist",
+    });
+    assert.ok(
+      !/^hey guys/i.test(unpunctuatedAsr.summary),
+      "Spoken filler intro must be stripped from summary"
+    );
+    assert.ok(
+      unpunctuatedAsr.summary.split(/\s+/).length <= 34,
+      "Unpunctuated ASR summary must stay brief"
+    );
+    assert.ok(
+      unpunctuatedAsr.keyPoints.length >= 3,
+      "Unpunctuated ASR transcript must split into >=3 distinct checklist items"
+    );
+
+    // Verify resummarizing into 'paragraph' style & Web UI guide presence
+    const resumRes = await fetch(
+      `${baseUrl}/api/reels/${askJson.data.reel.id}/resummarize`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ summaryStyle: "paragraph" }),
+      }
+    );
+    assert.strictEqual(resumRes.status, 200);
+    const resumJson = (await resumRes.json()) as {
+      data: { reel: { summaryStyle: string; summary: string } };
+    };
+    assert.strictEqual(resumJson.data.reel.summaryStyle, "paragraph");
+
+    const webRes = await fetch(`${baseUrl}/`);
+    const webHtml = await webRes.text();
+    assert.ok(
+      webHtml.includes("onboardingModal") &&
+        webHtml.includes("detailSummaryStyleBar"),
+      "Web Companion must include interactive onboarding guide & summary format switcher"
+    );
+
     await fetch(`${baseUrl}/api/reels/${askJson.data.reel.id}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },

@@ -11,6 +11,12 @@ const REEL_STATUSES = [
 ] as const;
 
 const MEDIA_FORMATS = ["mp3", "mp4", "skip"] as const;
+const SUMMARY_STYLES = [
+  "bullets",
+  "numbered",
+  "checklist",
+  "paragraph",
+] as const;
 
 export const createReelValidators = [
   body("sourceUrl")
@@ -36,6 +42,10 @@ export const createReelValidators = [
     .optional()
     .isIn(MEDIA_FORMATS)
     .withMessage(`mediaFormat must be one of: ${MEDIA_FORMATS.join(", ")}.`),
+  body("summaryStyle")
+    .optional()
+    .isIn(SUMMARY_STYLES)
+    .withMessage(`summaryStyle must be one of: ${SUMMARY_STYLES.join(", ")}.`),
   body("askBeforeConvert")
     .optional()
     .custom((v) => typeof v === "boolean" || v === "true" || v === "false")
@@ -48,6 +58,18 @@ export const confirmConvertValidators = [
     .optional()
     .isIn(MEDIA_FORMATS)
     .withMessage(`mediaFormat must be one of: ${MEDIA_FORMATS.join(", ")}.`),
+  body("summaryStyle")
+    .optional()
+    .isIn(SUMMARY_STYLES)
+    .withMessage(`summaryStyle must be one of: ${SUMMARY_STYLES.join(", ")}.`),
+];
+
+export const resummarizeReelValidators = [
+  param("id").isUUID().withMessage("id must be a valid UUID."),
+  body("summaryStyle")
+    .optional()
+    .isIn(SUMMARY_STYLES)
+    .withMessage(`summaryStyle must be one of: ${SUMMARY_STYLES.join(", ")}.`),
 ];
 
 export const reelIdParamValidator = [
@@ -105,6 +127,10 @@ export const updateReelValidators = [
     .isArray({ max: 20 })
     .withMessage("keyPoints must be an array of strings."),
   body("keyPoints.*").optional().isString(),
+  body("summaryStyle")
+    .optional()
+    .isIn(SUMMARY_STYLES)
+    .withMessage(`summaryStyle must be one of: ${SUMMARY_STYLES.join(", ")}.`),
   body("categoryName")
     .optional({ nullable: true })
     .isString()

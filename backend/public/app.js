@@ -3,7 +3,61 @@
     accessToken: "rs_access_token",
     refreshToken: "rs_refresh_token",
     user: "rs_user",
+    onboardingSeen: "rs_onboarding_seen_v1",
+    bannerDismissed: "rs_guide_banner_dismissed_v1",
+    checklistChecks: "rs_checklist_checks_v1",
   };
+
+  const STYLE_LABELS = {
+    bullets: "• Bullets",
+    numbered: "1. Steps",
+    checklist: "☑ Checklist",
+    paragraph: "¶ Paragraph",
+  };
+
+  const ONBOARDING_STEPS = [
+    {
+      badge: "STEP 1 OF 4 · SAVE ANY REEL",
+      title: "Share an Instagram Link or Upload MP4 / MP3",
+      desc: "Save knowledge from Instagram Reels without losing recipes, workouts, coding tips, or ideas in endless bookmarks.",
+      tips: [
+        "🔗 Paste any Instagram Reel link — or share directly from Instagram on mobile.",
+        "📁 Upload an MP4 video or MP3 audio file, or record audio straight from your mic.",
+        "🎬 New here? Click any sample Reel in the Live Demo Studio bar to test in 1 click!",
+      ],
+    },
+    {
+      badge: "STEP 2 OF 4 · ASK-FIRST AUDIO & VOICE-TO-TEXT",
+      title: "You Choose MP3 Audio or Full MP4 Video",
+      desc: "Reel-Saver always asks before downloading media so you stay in control of storage and speed.",
+      tips: [
+        "🎵 MP3 Audio (Recommended): 30× smaller than video (~0.5 MB/min), fast offline playback.",
+        "🎬 MP4 + MP3: Keeps the full playable Reel video plus extracted speech audio.",
+        "🗣 Card-Free Whisper AI transcribes English, Arabic, and 90+ languages into clean text.",
+      ],
+    },
+    {
+      badge: "STEP 3 OF 4 · BRIEF SUMMARY IN YOUR FORMAT",
+      title: "Brief, Complete Summaries — Formatted Your Way",
+      desc: "No walls of text! Every Reel is distilled into a tight overview + crisp points in the exact format you like best:",
+      tips: [
+        "• Bullet Points — Fast scannable takeaways & facts.",
+        "1. Numbered Steps — Exact chronological order for recipes, workouts & tutorials.",
+        "☑ Action Checklist — Interactive checkable items for groceries, packing, or tasks.",
+        "¶ Brief Paragraph — Cohesive 2–3 sentence TL;DR + highlight chips. Switch anytime!",
+      ],
+    },
+    {
+      badge: "STEP 4 OF 4 · SMART FOLDERS & FULL CONTROL",
+      title: "Auto-Categorized & 100% Editable",
+      desc: "Your saved Reels automatically land in smart folders and remain completely customizable.",
+      tips: [
+        "📂 AI sorts Reels into Recipes, Fitness, Tech, Nutrition, or your own custom folders.",
+        "✎ Rename or create categories anytime in the sidebar (English or Arabic).",
+        "🔄 Edit titles, notes, transcripts, or click '↻ AI Rewrite in Format' anytime.",
+      ],
+    },
+  ];
 
   let authMode = "login";
   let currentCategoryId = "";
@@ -16,6 +70,7 @@
   let isDictating = false;
   let mediaRecorder = null;
   let recordedChunks = [];
+  let onboardingStepIndex = 0;
 
   const $ = (id) => document.getElementById(id);
 
@@ -56,13 +111,22 @@
     if (accessToken) {
       headers.Authorization = `Bearer ${accessToken}`;
     }
-    if (!(options.body instanceof FormData) && options.body && !headers["Content-Type"]) {
+    if (
+      !(options.body instanceof FormData) &&
+      options.body &&
+      !headers["Content-Type"]
+    ) {
       headers["Content-Type"] = "application/json";
     }
 
     const res = await fetch(path, { ...options, headers });
 
-    if (res.status === 401 && refreshToken && !retried && !path.includes("/api/auth/")) {
+    if (
+      res.status === 401 &&
+      refreshToken &&
+      !retried &&
+      !path.includes("/api/auth/")
+    ) {
       const refreshRes = await fetch("/api/auth/refresh", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -90,6 +154,274 @@
     return json;
   }
 
+  // ─── Summary Style Helpers & Interactive Checklist Persistence ────────────
+  function normalizeStyle(style) {
+    return ["bullets", "numbered", "checklist", "paragraph"].includes(style)
+      ? style
+      : "bullets";
+  }
+
+  function setStyleBarValue(barId, inputId, style) {
+    const normalized = normalizeStyle(style);
+    const input = $(inputId);
+    if (input) input.value = normalized;
+    const bar = $(barId);
+    if (!bar) return;
+    bar.querySelectorAll(".style-pill").forEach((btn) => {
+      btn.classList.toggle(
+        "active",
+        btn.getAttribute("data-style") === normalized
+      );
+    });
+  }
+
+  function bindStyleBar(barId, inputId, onChange) {
+    const bar = $(barId);
+    if (!bar) return;
+    bar.querySelectorAll(".style-pill").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const style = normalizeStyle(btn.getAttribute("data-style"));
+        setStyleBarValue(barId, inputId, style);
+        if (onChange) onChange(style);
+      });
+    });
+  }
+
+  function getCheckedMap(reelId) {
+    try {
+      const all = JSON.parse(
+        localStorage.getItem(STORAGE_KEYS.checklistChecks) || "{}"
+      );
+      return all[reelId] || {};
+    } catch {
+      return {};
+    }
+  }
+
+  function toggleCheckedItem(reelId, index) {
+    try {
+      const all = JSON.parse(
+        localStorage.getItem(STORAGE_KEYS.checklistChecks) || "{}"
+      );
+      const map = all[reelId] || {};
+      map[index] = !map[index];
+      all[reelId] = map;
+      localStorage.setItem(STORAGE_KEYS.checklistChecks, JSON.stringify(all));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }
+
+  function parsePointsFromTextarea() {
+    return $("editKeyPoints")
+      .value.split("\n")
+      .map((line) =>
+        line.replace(/^(?:[-•*▪☑☐]\s*|\d+[.)]\s+)/, "").trim()
+      )
+      .filter(Boolean);
+  }
+
+  function buildPlainTextSummary(summary, points, style) {
+    const s = normalizeStyle(style);
+    const cleanSummary = (summary || "").trim();
+    const cleanPoints = (points || []).filter(Boolean);
+    if (s === "paragraph") {
+      const tail = cleanPoints.length
+        ? `\n\nHighlights: ${cleanPoints.join(" · ")}`
+        : "";
+      return `${cleanSummary}${tail}`.trim();
+    }
+    const formattedLines = cleanPoints.map((pt, idx) => {
+      if (s === "numbered") return `${idx + 1}. ${pt}`;
+      if (s === "checklist") return `☐ ${pt}`;
+      return `• ${pt}`;
+    });
+    return [cleanSummary, ...formattedLines].filter(Boolean).join("\n");
+  }
+
+  function renderDetailFormattedPreview() {
+    const container = $("formattedSummaryRender");
+    if (!container) return;
+
+    const reelId = $("editReelId").value || "draft";
+    const style = normalizeStyle($("detailSummaryStyleInput").value);
+    const summary = $("editSummary").value.trim();
+    const points = parsePointsFromTextarea();
+
+    if (!summary && points.length === 0) {
+      container.innerHTML = `<div style="color:var(--text-muted);font-size:13px;">Summary will appear here once processing completes.</div>`;
+      return;
+    }
+
+    if (style === "paragraph") {
+      const paragraphText =
+        summary || points.join(". ") + (points.length ? "." : "");
+      const chipsHtml =
+        points.length > 0
+          ? `<div class="fmt-highlight-chips">${points
+              .slice(0, 4)
+              .map(
+                (p) => `<span class="fmt-highlight-chip">✦ ${escapeHtml(p)}</span>`
+              )
+              .join("")}</div>`
+          : "";
+      container.innerHTML = `
+        <div style="color:#f1f5f9;font-size:13.8px;line-height:1.6;">${escapeHtml(
+          paragraphText
+        )}</div>
+        ${chipsHtml}
+      `;
+      return;
+    }
+
+    const checkedMap = style === "checklist" ? getCheckedMap(reelId) : {};
+    const listHtml = points
+      .map((pt, idx) => {
+        if (style === "numbered") {
+          return `<li><span class="fmt-marker">${idx + 1}.</span><span>${escapeHtml(
+            pt
+          )}</span></li>`;
+        }
+        if (style === "checklist") {
+          const isChecked = Boolean(checkedMap[idx]);
+          return `<li class="fmt-check-item ${
+            isChecked ? "checked" : ""
+          }" data-check-idx="${idx}">
+            <span class="fmt-marker">${isChecked ? "☑" : "☐"}</span>
+            <span>${escapeHtml(pt)}</span>
+          </li>`;
+        }
+        return `<li><span class="fmt-marker">•</span><span>${escapeHtml(
+          pt
+        )}</span></li>`;
+      })
+      .join("");
+
+    container.innerHTML = `
+      ${summary ? `<div class="fmt-tldr">${escapeHtml(summary)}</div>` : ""}
+      ${points.length > 0 ? `<ul class="fmt-list">${listHtml}</ul>` : ""}
+    `;
+
+    if (style === "checklist") {
+      container.querySelectorAll(".fmt-check-item").forEach((item) => {
+        item.addEventListener("click", () => {
+          const idx = Number(item.getAttribute("data-check-idx"));
+          toggleCheckedItem(reelId, idx);
+          renderDetailFormattedPreview();
+        });
+      });
+    }
+  }
+
+  bindStyleBar("addSummaryStyleBar", "addSummaryStyleInput");
+  bindStyleBar("confirmSummaryStyleBar", "confirmSummaryStyleInput");
+  bindStyleBar(
+    "detailSummaryStyleBar",
+    "detailSummaryStyleInput",
+    async (newStyle) => {
+      renderDetailFormattedPreview();
+      const id = $("editReelId").value;
+      if (!id) return;
+      try {
+        await apiFetch(`/api/reels/${encodeURIComponent(id)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ summaryStyle: newStyle }),
+        });
+        const cached = reelsCache.find((r) => r.id === id);
+        if (cached) {
+          cached.summaryStyle = newStyle;
+          renderReels();
+        }
+      } catch {
+        // Non-blocking save
+      }
+    }
+  );
+
+  // ─── Interactive New-User Onboarding Guide ────────────────────────────────
+  function renderOnboardingStep() {
+    const step = ONBOARDING_STEPS[onboardingStepIndex];
+    $("onboardingDots").innerHTML = ONBOARDING_STEPS.map(
+      (_s, idx) =>
+        `<div class="onboarding-dot ${
+          idx <= onboardingStepIndex ? "active" : ""
+        }" data-step="${idx}"></div>`
+    ).join("");
+
+    $("onboardingDots")
+      .querySelectorAll(".onboarding-dot")
+      .forEach((dot) => {
+        dot.addEventListener("click", () => {
+          onboardingStepIndex = Number(dot.getAttribute("data-step")) || 0;
+          renderOnboardingStep();
+        });
+      });
+
+    $("onboardingStepBody").innerHTML = `
+      <div class="onb-icon-badge">${escapeHtml(step.badge)}</div>
+      <div class="onb-title">${escapeHtml(step.title)}</div>
+      <div class="onb-desc">${escapeHtml(step.desc)}</div>
+      <div class="onb-tips">
+        ${step.tips
+          .map((tip) => `<div class="onb-tip">${escapeHtml(tip)}</div>`)
+          .join("")}
+      </div>
+    `;
+
+    $("onboardingPrevBtn").disabled = onboardingStepIndex === 0;
+    const isLast = onboardingStepIndex === ONBOARDING_STEPS.length - 1;
+    $("onboardingNextBtn").textContent = isLast
+      ? "Got It · Start Saving! 🚀"
+      : "Next Step →";
+  }
+
+  function openOnboardingModal() {
+    onboardingStepIndex = 0;
+    renderOnboardingStep();
+    $("onboardingModal").classList.remove("hidden");
+  }
+
+  function closeOnboardingModal() {
+    localStorage.setItem(STORAGE_KEYS.onboardingSeen, "1");
+    $("onboardingModal").classList.add("hidden");
+  }
+
+  $("authHowItWorksBtn").addEventListener("click", openOnboardingModal);
+  $("sidebarGuideBtn").addEventListener("click", () => {
+    localStorage.removeItem(STORAGE_KEYS.bannerDismissed);
+    updateQuickGuideBanner();
+    openOnboardingModal();
+  });
+  $("topbarGuideBtn").addEventListener("click", openOnboardingModal);
+  $("bannerOpenTourBtn").addEventListener("click", openOnboardingModal);
+  $("closeOnboardingBtn").addEventListener("click", closeOnboardingModal);
+  $("onboardingSkipBtn").addEventListener("click", closeOnboardingModal);
+  $("onboardingPrevBtn").addEventListener("click", () => {
+    if (onboardingStepIndex > 0) {
+      onboardingStepIndex -= 1;
+      renderOnboardingStep();
+    }
+  });
+  $("onboardingNextBtn").addEventListener("click", () => {
+    if (onboardingStepIndex < ONBOARDING_STEPS.length - 1) {
+      onboardingStepIndex += 1;
+      renderOnboardingStep();
+    } else {
+      closeOnboardingModal();
+    }
+  });
+
+  function updateQuickGuideBanner() {
+    const dismissed =
+      localStorage.getItem(STORAGE_KEYS.bannerDismissed) === "1";
+    $("quickGuideBanner").classList.toggle("hidden", dismissed);
+  }
+
+  $("dismissGuideBannerBtn").addEventListener("click", () => {
+    localStorage.setItem(STORAGE_KEYS.bannerDismissed, "1");
+    updateQuickGuideBanner();
+  });
+
   // ─── Auth & Demo Seeding ──────────────────────────────────────────────────
   function setAuthTab(mode) {
     authMode = mode;
@@ -115,7 +447,11 @@
       const payload =
         authMode === "login"
           ? { email, password }
-          : { name: $("authName").value.trim() || "Reel Saver User", email, password };
+          : {
+              name: $("authName").value.trim() || "Reel Saver User",
+              email,
+              password,
+            };
 
       const res = await apiFetch(endpoint, {
         method: "POST",
@@ -156,21 +492,24 @@
       }
       saveSession(authRes.data.user, authRes.data.tokens);
 
-      // Seed interactive live demo reels (real FFmpeg MP3/MP4 + 1 AWAITING_CONFIRMATION reel!)
+      // Seed interactive live demo reels with varied summary styles!
       const existing = await apiFetch("/api/reels");
       if ((existing.data?.reels || []).length === 0) {
         const samples = [
           {
             sourceUrl: "https://www.instagram.com/reel/DEMO_CHICKEN_01/",
             mediaFormat: "mp3",
+            summaryStyle: "numbered",
           },
           {
             sourceUrl: "https://www.instagram.com/reel/DEMO_ARABIC_04/",
             mediaFormat: "mp4",
+            summaryStyle: "checklist",
           },
           {
             sourceUrl: "https://www.instagram.com/reel/DEMO_FITNESS_03/",
             askBeforeConvert: true,
+            summaryStyle: "bullets",
           },
         ];
 
@@ -182,7 +521,7 @@
         }
       }
 
-      showToast("Live Demo ready! Try converting & transcribing any Reel.");
+      showToast("Live Demo ready! Click any Reel to switch summary formats.");
       await enterDashboard();
     } catch (err) {
       showToast(err.message);
@@ -252,24 +591,27 @@
           btn.addEventListener("click", async () => {
             const url = btn.getAttribute("data-demo-url");
             if (!url) return;
-            // Asks BEFORE auto-converting to MP3/MP4 and transcribing!
-            const choice = await askBeforeConvertingModal({
+            const decision = await askBeforeConvertingModal({
               urlLabel: url,
               showSkipOption: true,
+              defaultStyle: "bullets",
             });
-            if (!choice) return;
+            if (!decision) return;
             try {
               await apiFetch("/api/reels", {
                 method: "POST",
                 body: JSON.stringify({
                   sourceUrl: url,
-                  mediaFormat: choice,
+                  mediaFormat: decision.mediaFormat,
+                  summaryStyle: decision.summaryStyle,
                 }),
               });
               showToast(
-                choice === "skip"
-                  ? "Extracting caption & summarizing..."
-                  : `Auto-converting Reel to ${choice.toUpperCase()} & transcribing voice to text...`
+                decision.mediaFormat === "skip"
+                  ? "Extracting caption & creating brief summary..."
+                  : `Auto-converting Reel to ${decision.mediaFormat.toUpperCase()} & summarizing (${
+                      STYLE_LABELS[decision.summaryStyle]
+                    })...`
               );
               await Promise.all([loadReels(), loadCategories()]);
             } catch (err) {
@@ -321,14 +663,24 @@
     for (const cat of categoriesCache) {
       const active = currentCategoryId === cat.id ? "active" : "";
       html += `
-        <div class="category-item ${active}" data-cat-id="${escapeAttr(cat.id)}" data-cat-name="${escapeAttr(cat.name)}">
+        <div class="category-item ${active}" data-cat-id="${escapeAttr(
+        cat.id
+      )}" data-cat-name="${escapeAttr(cat.name)}">
           <div class="category-item-left" title="${escapeAttr(cat.name)}">
             <span>📁 ${escapeHtml(cat.name)}</span>
           </div>
           <div class="category-actions">
             <span class="cat-count">${cat.reelCount ?? 0}</span>
-            <button class="icon-btn rename-cat-btn" data-id="${escapeAttr(cat.id)}" data-name="${escapeAttr(cat.name)}" title="Rename category" type="button">✎</button>
-            <button class="icon-btn delete-cat-btn" data-id="${escapeAttr(cat.id)}" data-name="${escapeAttr(cat.name)}" title="Delete category" type="button">🗑</button>
+            <button class="icon-btn rename-cat-btn" data-id="${escapeAttr(
+              cat.id
+            )}" data-name="${escapeAttr(
+        cat.name
+      )}" title="Rename category" type="button">✎</button>
+            <button class="icon-btn delete-cat-btn" data-id="${escapeAttr(
+              cat.id
+            )}" data-name="${escapeAttr(
+        cat.name
+      )}" title="Delete category" type="button">🗑</button>
           </div>
         </div>
       `;
@@ -338,12 +690,17 @@
 
     container.querySelectorAll(".category-item").forEach((el) => {
       el.addEventListener("click", (e) => {
-        if (e.target.closest(".rename-cat-btn") || e.target.closest(".delete-cat-btn")) {
+        if (
+          e.target.closest(".rename-cat-btn") ||
+          e.target.closest(".delete-cat-btn")
+        ) {
           return;
         }
         currentCategoryId = el.getAttribute("data-cat-id") || "";
         const catName = el.getAttribute("data-cat-name");
-        $("currentViewTitle").textContent = catName ? `📁 ${catName}` : "All Saved Reels";
+        $("currentViewTitle").textContent = catName
+          ? `📁 ${catName}`
+          : "All Saved Reels";
         renderCategories();
         loadReels();
       });
@@ -377,7 +734,11 @@
         e.stopPropagation();
         const id = btn.getAttribute("data-id");
         const name = btn.getAttribute("data-name") || "";
-        if (!window.confirm(`Delete category "${name}"? Reels inside will be kept as Uncategorized.`)) {
+        if (
+          !window.confirm(
+            `Delete category "${name}"? Reels inside will be kept as Uncategorized.`
+          )
+        ) {
           return;
         }
         try {
@@ -425,7 +786,9 @@
     renderReels();
 
     const anyProcessing = reelsCache.some((r) =>
-      ["PENDING", "EXTRACTING", "TRANSCRIBING", "SUMMARIZING"].includes(r.status)
+      ["PENDING", "EXTRACTING", "TRANSCRIBING", "SUMMARIZING"].includes(
+        r.status
+      )
     );
     if (anyProcessing && !pollInterval) {
       pollInterval = setInterval(async () => {
@@ -475,11 +838,17 @@
       radio.addEventListener("change", updateFormatSelectionUI);
     });
 
-  function resolveConfirmModal(choice) {
+  function resolveConfirmModal(mediaFormat) {
     $("confirmConvertModal").classList.add("hidden");
     const r = confirmModalResolver;
     confirmModalResolver = null;
-    if (r) r(choice);
+    if (!r) return;
+    if (!mediaFormat) {
+      r(null);
+      return;
+    }
+    const summaryStyle = normalizeStyle($("confirmSummaryStyleInput").value);
+    r({ mediaFormat, summaryStyle });
   }
 
   $("closeConfirmConvertBtn").addEventListener("click", () =>
@@ -498,13 +867,24 @@
     resolveConfirmModal(selectedRadio ? selectedRadio.value : "mp3");
   });
 
-  function askBeforeConvertingModal({ urlLabel = "", showSkipOption = true }) {
-    $("confirmConvertUrlPreview").textContent = urlLabel ? `Reel: ${urlLabel}` : "";
+  function askBeforeConvertingModal({
+    urlLabel = "",
+    showSkipOption = true,
+    defaultStyle = "bullets",
+  }) {
+    $("confirmConvertUrlPreview").textContent = urlLabel
+      ? `Reel: ${urlLabel}`
+      : "";
     $("confirmConvertSkipBtn").classList.toggle("hidden", !showSkipOption);
     const mp3Radio = document.querySelector(
       'input[name="convertFormatChoice"][value="mp3"]'
     );
     if (mp3Radio) mp3Radio.checked = true;
+    setStyleBarValue(
+      "confirmSummaryStyleBar",
+      "confirmSummaryStyleInput",
+      defaultStyle
+    );
     updateFormatSelectionUI();
     $("confirmConvertModal").classList.remove("hidden");
     return new Promise((resolve) => {
@@ -513,27 +893,73 @@
   }
 
   async function promptAndTriggerReelConversion(reel) {
-    const choice = await askBeforeConvertingModal({
+    const decision = await askBeforeConvertingModal({
       urlLabel: reel.sourceUrl || "",
       showSkipOption: reel.status === "AWAITING_CONFIRMATION",
+      defaultStyle: reel.summaryStyle || "bullets",
     });
-    if (!choice) return;
+    if (!decision) return;
 
     try {
-      await apiFetch(`/api/reels/${encodeURIComponent(reel.id)}/confirm-convert`, {
-        method: "POST",
-        body: JSON.stringify({ mediaFormat: choice }),
-      });
+      await apiFetch(
+        `/api/reels/${encodeURIComponent(reel.id)}/confirm-convert`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            mediaFormat: decision.mediaFormat,
+            summaryStyle: decision.summaryStyle,
+          }),
+        }
+      );
       showToast(
-        choice === "skip"
-          ? "Extracting Reel caption & summarizing..."
-          : `Auto-converting Reel to ${choice.toUpperCase()} & transcribing voice to text...`
+        decision.mediaFormat === "skip"
+          ? "Extracting Reel caption & creating brief summary..."
+          : `Auto-converting Reel to ${decision.mediaFormat.toUpperCase()} & transcribing voice...`
       );
       closeDetailModal();
       await loadReels();
     } catch (err) {
       showToast(err.message);
     }
+  }
+
+  function renderCardPointsPreview(points, style) {
+    if (!points || points.length === 0) return "";
+    const s = normalizeStyle(style);
+    if (s === "paragraph") {
+      return `<div class="fmt-highlight-chips" style="margin-top:2px;">${points
+        .slice(0, 3)
+        .map(
+          (p) => `<span class="fmt-highlight-chip">✦ ${escapeHtml(p)}</span>`
+        )
+        .join("")}</div>`;
+    }
+    if (s === "numbered") {
+      return `<ul class="reel-keypoints-preview numbered">${points
+        .slice(0, 3)
+        .map(
+          (p, i) =>
+            `<li><strong style="color:var(--primary);">${
+              i + 1
+            }.</strong> ${escapeHtml(p)}</li>`
+        )
+        .join("")}</ul>`;
+    }
+    if (s === "checklist") {
+      return `<ul class="reel-keypoints-preview checklist">${points
+        .slice(0, 3)
+        .map(
+          (p) =>
+            `<li><strong style="color:var(--primary);">☐</strong> ${escapeHtml(
+              p
+            )}</li>`
+        )
+        .join("")}</ul>`;
+    }
+    return `<ul class="reel-keypoints-preview">${points
+      .slice(0, 3)
+      .map((p) => `<li>${escapeHtml(p)}</li>`)
+      .join("")}</ul>`;
   }
 
   function renderReels() {
@@ -543,13 +969,18 @@
         <div class="empty-state" style="grid-column: 1 / -1;">
           <h3 style="margin-bottom:8px;">No Reels in this view yet</h3>
           <p style="color:var(--text-muted);font-size:14px;margin-bottom:16px;">
-            Share an Instagram Reel link or upload an MP4 / MP3 clip to convert, transcribe, summarize, and categorize it.
+            Share an Instagram Reel link, upload an MP4 / MP3 clip, or click a Live Demo Reel above to try it right now!
           </p>
-          <button class="btn btn-primary" type="button" id="emptyAddBtn">+ Share Link or MP4 / MP3</button>
+          <div style="display:flex;justify-content:center;gap:10px;flex-wrap:wrap;">
+            <button class="btn btn-primary" type="button" id="emptyAddBtn">+ Share Link or MP4 / MP3</button>
+            <button class="btn btn-secondary" type="button" id="emptyGuideBtn">❓ See How It Works</button>
+          </div>
         </div>
       `;
       const emptyBtn = $("emptyAddBtn");
       if (emptyBtn) emptyBtn.addEventListener("click", openAddModal);
+      const guideBtn = $("emptyGuideBtn");
+      if (guideBtn) guideBtn.addEventListener("click", openOnboardingModal);
       return;
     }
 
@@ -563,27 +994,36 @@
             ? "Ready to Convert & Transcribe"
             : "Processing Reel...");
         const catName = reel.category?.name || "Uncategorized";
+        const style = normalizeStyle(reel.summaryStyle);
         const processingHint =
           reel.status === "AWAITING_CONFIRMATION"
             ? "Waiting for your confirmation to auto-convert to MP3/MP4 and transcribe voice to text."
             : reel.status === "TRANSCRIBING"
-            ? "Transcribing spoken voice with Local Whisper AI (first run downloads ~140MB model to data/whisper-models)..."
+            ? "Transcribing spoken voice with Local Whisper AI..."
             : reel.status === "EXTRACTING"
             ? "Auto-downloading Reel stream & converting to 16kHz MP3 via yt-dlp + FFmpeg..."
             : reel.status === "SUMMARIZING"
-            ? "Generating AI summary, key points & category..."
+            ? "Distilling brief, complete summary & key points..."
             : "Queued for processing...";
         const summary =
           reel.summary ||
           (reel.status === "FAILED"
             ? reel.errorMessage || "Processing failed."
             : processingHint);
-        const points = (reel.keyPoints || []).slice(0, 3);
+        const points = reel.keyPoints || [];
         const audioTag = reel.videoUrl
-          ? `<span>🎬 MP4 + 🎵 MP3${reel.audioDurationSec ? ` (${reel.audioDurationSec}s)` : ""}</span>`
+          ? `<span>🎬 MP4 + 🎵 MP3${
+              reel.audioDurationSec ? ` (${reel.audioDurationSec}s)` : ""
+            }</span>`
           : reel.audioUrl
-          ? `<span>🎵 MP3 (${reel.audioDurationSec ? `${reel.audioDurationSec}s` : "ready"})</span>`
-          : `<span>${reel.authorHandle ? `@${escapeHtml(reel.authorHandle)}` : "Saved Reel"}</span>`;
+          ? `<span>🎵 MP3 (${
+              reel.audioDurationSec ? `${reel.audioDurationSec}s` : "ready"
+            })</span>`
+          : `<span>${
+              reel.authorHandle
+                ? `@${escapeHtml(reel.authorHandle)}`
+                : "Saved Reel"
+            }</span>`;
 
         const needsVoiceConversion =
           reel.status === "AWAITING_CONFIRMATION" ||
@@ -618,7 +1058,16 @@
         return `
           <article class="reel-card" data-reel-id="${escapeAttr(reel.id)}">
             <div class="reel-card-top">
-              <span class="badge badge-cat">📁 ${escapeHtml(catName)}</span>
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                <span class="badge badge-cat">📁 ${escapeHtml(catName)}</span>
+                ${
+                  reel.status === "DONE"
+                    ? `<span class="badge badge-style">${escapeHtml(
+                        STYLE_LABELS[style]
+                      )}</span>`
+                    : ""
+                }
+              </div>
               <span class="badge ${statusBadgeClass(reel.status)}">${escapeHtml(
           statusDisplayLabel(reel.status)
         )}</span>
@@ -630,17 +1079,11 @@
                 ? `<div class="pipeline-stepper">
                     <div class="pipeline-step ${step1State}">① MP4→MP3</div>
                     <div class="pipeline-step ${step2State}">② Voice→Text</div>
-                    <div class="pipeline-step ${step3State}">③ AI Summary</div>
+                    <div class="pipeline-step ${step3State}">③ Brief Summary</div>
                   </div>`
                 : ""
             }
-            ${
-              points.length > 0
-                ? `<ul class="reel-keypoints-preview">${points
-                    .map((p) => `<li>${escapeHtml(p)}</li>`)
-                    .join("")}</ul>`
-                : ""
-            }
+            ${renderCardPointsPreview(points, style)}
             ${
               needsVoiceConversion
                 ? `<div class="card-convert-cta">
@@ -653,7 +1096,7 @@
             }
             <div class="reel-meta-footer">
               ${audioTag}
-              <span>Adjust &amp; View →</span>
+              <span>View &amp; Format →</span>
             </div>
           </article>
         `;
@@ -686,12 +1129,14 @@
 
   // ─── Add / Share Reel Modal + MP4/MP3 Dropzone + Test WAV Synth ───────────
   function openAddModal() {
+    setStyleBarValue("addSummaryStyleBar", "addSummaryStyleInput", "bullets");
     $("addReelModal").classList.remove("hidden");
   }
 
   function closeAddModal() {
     $("addReelModal").classList.add("hidden");
     $("addReelForm").reset();
+    setStyleBarValue("addSummaryStyleBar", "addSummaryStyleInput", "bullets");
     selectedMediaFile = null;
     $("dropzoneText").innerHTML =
       "Click or drag &amp; drop an <strong>MP4</strong> or <strong>MP3</strong> here — FFmpeg converts MP4 → 16kHz MP3 automatically";
@@ -709,7 +1154,9 @@
     e.preventDefault();
     dropzone.classList.add("dragover");
   });
-  dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover"));
+  dropzone.addEventListener("dragleave", () =>
+    dropzone.classList.remove("dragover")
+  );
   dropzone.addEventListener("drop", (e) => {
     e.preventDefault();
     dropzone.classList.remove("dragover");
@@ -726,10 +1173,11 @@
   function setChosenMediaFile(file) {
     selectedMediaFile = file;
     const kb = Math.round(file.size / 1024);
-    $("dropzoneText").innerHTML = `✅ Selected: <strong>${escapeHtml(file.name)}</strong> (${kb} KB) — ready for FFmpeg MP3 conversion`;
+    $("dropzoneText").innerHTML = `✅ Selected: <strong>${escapeHtml(
+      file.name
+    )}</strong> (${kb} KB) — ready for FFmpeg MP3 conversion`;
   }
 
-  // Synthesize a valid 3-second PCM WAV clip so users can test FFmpeg -> MP3 conversion in 1 click!
   $("generateSampleAudioBtn").addEventListener("click", () => {
     const sampleRate = 16000;
     const seconds = 3;
@@ -737,7 +1185,8 @@
     const buffer = new ArrayBuffer(44 + numSamples * 2);
     const view = new DataView(buffer);
     const writeStr = (offset, str) => {
-      for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+      for (let i = 0; i < str.length; i++)
+        view.setUint8(offset + i, str.charCodeAt(i));
     };
     writeStr(0, "RIFF");
     view.setUint32(4, 36 + numSamples * 2, true);
@@ -757,7 +1206,11 @@
       const t = i / sampleRate;
       const env = Math.min(1, t * 4) * Math.max(0, 1 - (t - 2.2));
       const sample = Math.sin(2 * Math.PI * 440 * t) * 0.25 * env;
-      view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, sample)) * 32767, true);
+      view.setInt16(
+        44 + i * 2,
+        Math.max(-1, Math.min(1, sample)) * 32767,
+        true
+      );
     }
 
     const wavFile = new File([buffer], "sample-reel-clip.wav", {
@@ -771,10 +1224,11 @@
     if (!$("reelAuthor").value.trim()) {
       $("reelAuthor").value = "@focus.builder";
     }
-    showToast("Generated 3s test clip + caption! Click 'Process & Summarize Reel' to test FFmpeg → MP3.");
+    showToast(
+      "Generated 3s test clip + caption! Pick a Summary Format & click Continue."
+    );
   });
 
-  // Record real microphone / speaker audio as WebM -> converted to MP3 by FFmpeg -> transcribed by built-in Node Whisper!
   $("recordAudioBtn").addEventListener("click", async () => {
     const btn = $("recordAudioBtn");
     if (mediaRecorder && mediaRecorder.state === "recording") {
@@ -783,7 +1237,9 @@
     }
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      showToast("Microphone recording requires HTTPS or localhost in a modern browser.");
+      showToast(
+        "Microphone recording requires HTTPS or localhost in a modern browser."
+      );
       return;
     }
 
@@ -804,7 +1260,9 @@
         });
         setChosenMediaFile(file);
         btn.textContent = "🔴 Record Voice / Reel Audio (→ Local Whisper)";
-        showToast("Audio recorded! Click 'Process & Summarize Reel' to transcribe with Local Whisper.");
+        showToast(
+          "Audio recorded! Click Continue to transcribe & summarize."
+        );
       };
 
       mediaRecorder.start();
@@ -815,11 +1273,13 @@
     }
   });
 
-  // Free Browser Speech Recognition (Zero card, zero cost!)
   $("dictateSpeechBtn").addEventListener("click", () => {
-    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const SpeechRec =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRec) {
-      showToast("Browser speech recognition is available in Chrome / Edge / Safari.");
+      showToast(
+        "Browser speech recognition is available in Chrome / Edge / Safari."
+      );
       return;
     }
 
@@ -860,23 +1320,25 @@
     const categoryName = $("reelCategoryInput").value.trim();
     const caption = $("reelCaption").value.trim();
     const transcript = $("reelTranscriptInput").value.trim();
+    let summaryStyle = normalizeStyle($("addSummaryStyleInput").value);
 
     if (!sourceUrl && !selectedMediaFile) {
       showToast("Paste an Instagram Reel URL or choose an MP4/MP3 file.");
       return;
     }
 
-    // Ask the user BEFORE auto-downloading/converting a Reel URL into MP3/MP4 & transcribing!
     let mediaFormat = "mp3";
     if (sourceUrl && !selectedMediaFile && !transcript) {
-      const choice = await askBeforeConvertingModal({
+      const decision = await askBeforeConvertingModal({
         urlLabel: sourceUrl,
         showSkipOption: true,
+        defaultStyle: summaryStyle,
       });
-      if (!choice) {
-        return; // User cancelled
+      if (!decision) {
+        return;
       }
-      mediaFormat = choice;
+      mediaFormat = decision.mediaFormat;
+      summaryStyle = decision.summaryStyle;
     }
 
     const btn = $("submitAddReelBtn");
@@ -889,6 +1351,7 @@
       if (caption) form.append("caption", caption);
       if (transcript) form.append("transcript", transcript);
       form.append("mediaFormat", mediaFormat);
+      form.append("summaryStyle", summaryStyle);
       if (selectedMediaFile) form.append("media", selectedMediaFile);
 
       await apiFetch("/api/reels", {
@@ -899,8 +1362,10 @@
       closeAddModal();
       showToast(
         mediaFormat === "skip"
-          ? "Reel saved! Extracting caption & summarizing..."
-          : `Auto-converting Reel to ${mediaFormat.toUpperCase()} & transcribing voice to text...`
+          ? "Reel saved! Creating brief summary..."
+          : `Auto-converting Reel to ${mediaFormat.toUpperCase()} & summarizing (${
+              STYLE_LABELS[summaryStyle]
+            })...`
       );
       await Promise.all([loadReels(), loadCategories()]);
     } catch (err) {
@@ -944,6 +1409,9 @@
       audioPlayer.removeAttribute("src");
     }
 
+    const style = normalizeStyle(reel.summaryStyle);
+    setStyleBarValue("detailSummaryStyleBar", "detailSummaryStyleInput", style);
+
     $("editTitle").value = reel.title || "";
     $("editCategoryName").value = reel.category?.name || "";
     $("editAuthor").value = reel.authorHandle ? `@${reel.authorHandle}` : "";
@@ -951,6 +1419,8 @@
     $("editKeyPoints").value = (reel.keyPoints || []).join("\n");
     $("editTranscript").value = reel.transcript || "";
     $("editNotes").value = reel.notes || "";
+
+    renderDetailFormattedPreview();
 
     const linkBtn = $("openOriginalUrlBtn");
     if (reel.sourceUrl && reel.sourceUrl.startsWith("http")) {
@@ -962,6 +1432,28 @@
 
     $("detailModal").classList.remove("hidden");
   }
+
+  $("editSummary").addEventListener("input", renderDetailFormattedPreview);
+  $("editKeyPoints").addEventListener("input", renderDetailFormattedPreview);
+
+  $("copyFormattedSummaryBtn").addEventListener("click", async () => {
+    const style = normalizeStyle($("detailSummaryStyleInput").value);
+    const text = buildPlainTextSummary(
+      $("editSummary").value,
+      parsePointsFromTextarea(),
+      style
+    );
+    if (!text) {
+      showToast("Nothing to copy yet.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(`Copied ${STYLE_LABELS[style]} summary to clipboard!`);
+    } catch {
+      showToast("Could not access clipboard.");
+    }
+  });
 
   function closeDetailModal() {
     $("detailAudioPlayer").pause();
@@ -1006,10 +1498,8 @@
     const btn = $("saveEditsBtn");
     btn.disabled = true;
     try {
-      const keyPoints = $("editKeyPoints")
-        .value.split("\n")
-        .map((line) => line.replace(/^[-•*]\s*/, "").trim())
-        .filter(Boolean);
+      const keyPoints = parsePointsFromTextarea();
+      const summaryStyle = normalizeStyle($("detailSummaryStyleInput").value);
 
       const payload = {
         title: $("editTitle").value.trim(),
@@ -1017,6 +1507,7 @@
         authorHandle: $("editAuthor").value.trim(),
         summary: $("editSummary").value.trim(),
         keyPoints,
+        summaryStyle,
         transcript: $("editTranscript").value.trim(),
         notes: $("editNotes").value.trim(),
       };
@@ -1026,7 +1517,7 @@
         body: JSON.stringify(payload),
       });
 
-      showToast("All adjustments saved!");
+      showToast("All adjustments & format saved!");
       closeDetailModal();
       await Promise.all([loadCategories(), loadReels()]);
     } catch (err) {
@@ -1038,19 +1529,22 @@
 
   $("resummarizeBtn").addEventListener("click", async () => {
     const id = $("editReelId").value;
+    const summaryStyle = normalizeStyle($("detailSummaryStyleInput").value);
     const btn = $("resummarizeBtn");
     btn.disabled = true;
     try {
-      // Save any transcript edits first, then trigger resummarize
       const res = await apiFetch(`/api/reels/${encodeURIComponent(id)}`, {
         method: "PATCH",
         body: JSON.stringify({
           transcript: $("editTranscript").value.trim(),
+          summaryStyle,
           resummarize: true,
         }),
       });
       openDetailModal(res.data.reel);
-      showToast("AI summary & key points regenerated from transcript!");
+      showToast(
+        `Brief summary regenerated in ${STYLE_LABELS[summaryStyle]} format!`
+      );
       await Promise.all([loadCategories(), loadReels()]);
     } catch (err) {
       showToast(err.message);
@@ -1086,6 +1580,7 @@
       id,
       sourceUrl: $("openOriginalUrlBtn").getAttribute("href") || "",
       status: "DONE",
+      summaryStyle: normalizeStyle($("detailSummaryStyleInput").value),
     };
     await promptAndTriggerReelConversion(reel);
   });
@@ -1127,10 +1622,22 @@
 
   async function enterDashboard() {
     renderViewState();
-    const storedUser = JSON.parse(localStorage.getItem(STORAGE_KEYS.user) || "{}");
+    updateQuickGuideBanner();
+    const storedUser = JSON.parse(
+      localStorage.getItem(STORAGE_KEYS.user) || "{}"
+    );
     $("userEmailLabel").textContent = storedUser.email || "";
-    await Promise.all([loadSystemCapabilities(), loadCategories(), loadReels()]);
+    await Promise.all([
+      loadSystemCapabilities(),
+      loadCategories(),
+      loadReels(),
+    ]);
     checkPwaSharedParams();
+
+    // Auto-show the interactive onboarding walkthrough once for brand-new visitors
+    if (!localStorage.getItem(STORAGE_KEYS.onboardingSeen)) {
+      openOnboardingModal();
+    }
   }
 
   function escapeHtml(str) {

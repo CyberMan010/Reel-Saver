@@ -24,6 +24,7 @@ DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ReelStatus') THEN
     CREATE TYPE "ReelStatus" AS ENUM (
+      'AWAITING_CONFIRMATION',
       'PENDING',
       'EXTRACTING',
       'TRANSCRIBING',
@@ -32,6 +33,7 @@ BEGIN
       'FAILED'
     );
   ELSE
+    ALTER TYPE "ReelStatus" ADD VALUE IF NOT EXISTS 'AWAITING_CONFIRMATION';
     ALTER TYPE "ReelStatus" ADD VALUE IF NOT EXISTS 'TRANSCRIBING';
   END IF;
 END $$;
@@ -59,8 +61,10 @@ CREATE TABLE IF NOT EXISTS public."Reel" (
   transcript text,
   summary text,
   "keyPoints" text[] NOT NULL DEFAULT '{}',
+  "summaryStyle" text NOT NULL DEFAULT 'bullets',
   notes text,
   "audioUrl" text,
+  "videoUrl" text,
   "audioDurationSec" double precision,
   "transcriptionSource" text,
   status "ReelStatus" NOT NULL DEFAULT 'PENDING',
@@ -73,7 +77,9 @@ CREATE TABLE IF NOT EXISTS public."Reel" (
 ALTER TABLE public."Reel"
   ADD COLUMN IF NOT EXISTS title text,
   ADD COLUMN IF NOT EXISTS notes text,
+  ADD COLUMN IF NOT EXISTS "summaryStyle" text NOT NULL DEFAULT 'bullets',
   ADD COLUMN IF NOT EXISTS "audioUrl" text,
+  ADD COLUMN IF NOT EXISTS "videoUrl" text,
   ADD COLUMN IF NOT EXISTS "audioDurationSec" double precision,
   ADD COLUMN IF NOT EXISTS "transcriptionSource" text;
 
