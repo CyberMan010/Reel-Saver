@@ -23,6 +23,7 @@ class _AddReelSheetState extends State<AddReelSheet> {
 
   final stt.SpeechToText _speech = stt.SpeechToText();
   File? _pickedMediaFile;
+  String _summaryStyle = 'bullets';
   bool _isListening = false;
   bool _submitting = false;
 
@@ -152,6 +153,7 @@ class _AddReelSheetState extends State<AddReelSheet> {
             transcript: _transcriptCtrl.text,
             categoryName: _categoryCtrl.text,
             mediaFormat: chosenFormat,
+            summaryStyle: _summaryStyle,
           );
       if (mounted) Navigator.of(context).pop();
     } catch (err) {
@@ -207,7 +209,29 @@ class _AddReelSheetState extends State<AddReelSheet> {
                     : 'Selected: ${_pickedMediaFile!.path.split(RegExp(r'[/\\]')).last}',
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
+            Text(
+              'Summary Format (Brief & Complete — switchable anytime)',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: Colors.white70,
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+            const SizedBox(height: 6),
+            SegmentedButton<String>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(value: 'bullets', label: Text('• Bullets')),
+                ButtonSegment(value: 'numbered', label: Text('1. Steps')),
+                ButtonSegment(value: 'checklist', label: Text('☑ Check')),
+                ButtonSegment(value: 'paragraph', label: Text('¶ Brief')),
+              ],
+              selected: {_summaryStyle},
+              onSelectionChanged: (sel) {
+                setState(() => _summaryStyle = sel.first);
+              },
+            ),
+            const SizedBox(height: 14),
             Autocomplete<String>(
               optionsBuilder: (val) {
                 if (val.text.isEmpty) return suggestions;

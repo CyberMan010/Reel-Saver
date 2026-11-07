@@ -1,7 +1,7 @@
 import { supabaseAdmin } from "../config/supabase";
 import { mutateLocalDb, readLocalDb } from "../storage/localStore";
 import { withStorageFallback } from "../storage/storageManager";
-import type { Reel, ReelStatus } from "../types/reel.types";
+import type { Reel, ReelStatus, SummaryStyle } from "../types/reel.types";
 
 const TABLE = "Reel";
 
@@ -12,7 +12,20 @@ const EXTENDED_COLUMNS = new Set([
   "videoUrl",
   "audioDurationSec",
   "transcriptionSource",
+  "summaryStyle",
 ]);
+
+function normalizeSummaryStyle(raw: unknown): SummaryStyle {
+  if (
+    raw === "bullets" ||
+    raw === "numbered" ||
+    raw === "checklist" ||
+    raw === "paragraph"
+  ) {
+    return raw;
+  }
+  return "bullets";
+}
 
 function normalizeReelRow(row: Partial<Reel> & Record<string, unknown>): Reel {
   return {
@@ -26,6 +39,7 @@ function normalizeReelRow(row: Partial<Reel> & Record<string, unknown>): Reel {
     transcript: (row.transcript as string | null) ?? null,
     summary: (row.summary as string | null) ?? null,
     keyPoints: Array.isArray(row.keyPoints) ? (row.keyPoints as string[]) : [],
+    summaryStyle: normalizeSummaryStyle(row.summaryStyle),
     notes: (row.notes as string | null) ?? null,
     audioUrl: (row.audioUrl as string | null) ?? null,
     videoUrl: (row.videoUrl as string | null) ?? null,
@@ -72,11 +86,13 @@ export async function createReel(payload: {
   videoUrl?: string | null;
   audioDurationSec?: number | null;
   transcriptionSource?: string | null;
+  summaryStyle?: SummaryStyle;
   categoryId?: string | null;
   initialStatus?: ReelStatus;
 }): Promise<Reel> {
   const now = new Date().toISOString();
   const status: ReelStatus = payload.initialStatus ?? "PENDING";
+  const summaryStyle: SummaryStyle = payload.summaryStyle ?? "bullets";
   const fullRecord: Reel = {
     id: payload.id,
     userId: payload.userId,
@@ -88,6 +104,7 @@ export async function createReel(payload: {
     transcript: payload.transcript ?? null,
     summary: null,
     keyPoints: [],
+    summaryStyle,
     notes: payload.notes ?? null,
     audioUrl: payload.audioUrl ?? null,
     videoUrl: payload.videoUrl ?? null,
@@ -116,6 +133,7 @@ export async function createReel(payload: {
         videoUrl: fullRecord.videoUrl,
         audioDurationSec: fullRecord.audioDurationSec,
         transcriptionSource: fullRecord.transcriptionSource,
+        summaryStyle: fullRecord.summaryStyle,
         categoryId: fullRecord.categoryId,
         status,
         keyPoints: [],
@@ -363,6 +381,7 @@ export async function updateReelSummary(
     title?: string | null;
     summary: string;
     keyPoints: string[];
+    summaryStyle?: SummaryStyle;
     categoryId: string | null;
     processedAt: string;
   }
@@ -384,6 +403,9 @@ export async function updateReelSummary(
         }
         reel.summary = fields.summary;
         reel.keyPoints = [...fields.keyPoints];
+        if (fields.summaryStyle !== undefined) {
+          reel.summaryStyle = fields.summaryStyle;
+        }
         reel.categoryId = fields.categoryId;
         reel.processedAt = fields.processedAt;
         reel.status = "DONE";
@@ -405,6 +427,7 @@ export async function updateReelFields(
       | "transcript"
       | "summary"
       | "keyPoints"
+      | "summaryStyle"
       | "notes"
       | "categoryId"
       | "status"

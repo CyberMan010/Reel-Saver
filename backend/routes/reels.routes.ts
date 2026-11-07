@@ -8,6 +8,7 @@ import {
   createReelValidators,
   listReelsValidators,
   reelIdParamValidator,
+  resummarizeReelValidators,
   updateCategoryValidators,
   updateReelValidators,
 } from "../validators/reels.validators";
@@ -90,7 +91,7 @@ router.post(
  */
 router.post(
   "/:id/resummarize",
-  reelIdParamValidator,
+  resummarizeReelValidators,
   handleValidationErrors,
   reelsController.resummarizeReel
 );

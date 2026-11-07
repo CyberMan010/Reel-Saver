@@ -9,6 +9,8 @@ export type ReelStatus =
 
 export type MediaFormatPreference = "mp3" | "mp4" | "skip";
 
+export type SummaryStyle = "bullets" | "numbered" | "checklist" | "paragraph";
+
 export interface Reel {
   id: string;
   userId: string;
@@ -20,6 +22,7 @@ export interface Reel {
   transcript: string | null;
   summary: string | null;
   keyPoints: string[];
+  summaryStyle: SummaryStyle;
   notes: string | null;
   audioUrl: string | null;
   videoUrl: string | null;
@@ -53,11 +56,13 @@ export interface CreateReelBody {
   notes?: string;
   categoryName?: string;
   mediaFormat?: MediaFormatPreference;
+  summaryStyle?: SummaryStyle;
   askBeforeConvert?: boolean | string;
 }
 
 export interface ConfirmConvertBody {
   mediaFormat?: MediaFormatPreference;
+  summaryStyle?: SummaryStyle;
 }
 
 export interface UpdateReelBody {
@@ -68,6 +73,7 @@ export interface UpdateReelBody {
   transcript?: string | null;
   summary?: string | null;
   keyPoints?: string[];
+  summaryStyle?: SummaryStyle;
   notes?: string | null;
   categoryName?: string | null;
   categoryId?: string | null;

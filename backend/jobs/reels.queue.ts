@@ -10,6 +10,7 @@ export interface ReelJobPayload {
   uploadedFilePath?: string | null;
   uploadedMimeType?: string | null;
   mediaFormat?: "mp3" | "mp4" | "skip";
+  summaryStyle?: "bullets" | "numbered" | "checklist" | "paragraph";
 }
 
 type LocalJobProcessor = (payload: ReelJobPayload) => Promise<void>;
@@ -77,6 +78,7 @@ export async function enqueueReelProcessing(
     uploadedFilePath?: string | null;
     uploadedMimeType?: string | null;
     mediaFormat?: "mp3" | "mp4" | "skip";
+    summaryStyle?: "bullets" | "numbered" | "checklist" | "paragraph";
   }
 ): Promise<void> {
   const payload: ReelJobPayload = {
@@ -84,6 +86,7 @@ export async function enqueueReelProcessing(
     uploadedFilePath: options?.uploadedFilePath ?? null,
     uploadedMimeType: options?.uploadedMimeType ?? null,
     mediaFormat: options?.mediaFormat ?? "mp3",
+    summaryStyle: options?.summaryStyle,
   };
 
   if (await isRedisQueueActive()) {

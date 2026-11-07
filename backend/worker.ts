@@ -7,8 +7,13 @@ import { processReel } from "./services/reels.service";
 const worker = new Worker(
   REEL_PROCESSING_QUEUE,
   async (job) => {
-    const { reelId, uploadedFilePath, uploadedMimeType, mediaFormat } =
-      job.data as ReelJobPayload;
+    const {
+      reelId,
+      uploadedFilePath,
+      uploadedMimeType,
+      mediaFormat,
+      summaryStyle,
+    } = job.data as ReelJobPayload;
     console.log(
       `[Worker] Processing reel ${reelId} (attempt ${job.attemptsMade + 1})`
     );
@@ -16,6 +21,7 @@ const worker = new Worker(
       uploadedFilePath,
       uploadedMimeType,
       mediaFormat,
+      summaryStyle,
       forceReprocess: true,
     });
     console.log(`[Worker] Reel ${reelId} processed successfully.`);

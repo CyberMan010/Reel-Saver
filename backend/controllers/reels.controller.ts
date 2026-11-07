@@ -6,6 +6,7 @@ import type {
   CreateReelBody,
   ListReelsQuery,
   ReelStatus,
+  SummaryStyle,
   UpdateReelBody,
 } from "../types/reel.types";
 
@@ -144,14 +145,15 @@ export async function uploadReelMedia(
 }
 
 export async function resummarizeReel(
-  req: Request<{ id: string }>,
+  req: Request<{ id: string }, object, { summaryStyle?: SummaryStyle }>,
   res: Response,
   next: NextFunction
 ): Promise<void> {
   try {
     const reel = await reelsService.resummarizeReelForUser(
       req.user!.userId,
-      req.params.id
+      req.params.id,
+      req.body?.summaryStyle
     );
     sendSuccess(res, "Summary regenerated successfully.", { reel });
   } catch (err) {
@@ -166,10 +168,12 @@ export async function confirmConvertReel(
 ): Promise<void> {
   try {
     const mediaFormat = req.body?.mediaFormat ?? "mp3";
+    const summaryStyle = req.body?.summaryStyle;
     const reel = await reelsService.confirmAndConvertReelForUser(
       req.user!.userId,
       req.params.id,
-      mediaFormat
+      mediaFormat,
+      summaryStyle
     );
     sendSuccess(
       res,
@@ -193,7 +197,8 @@ export async function retryReel(
     const reel = await reelsService.retryReelForUser(
       req.user!.userId,
       req.params.id,
-      req.body?.mediaFormat ?? "mp3"
+      req.body?.mediaFormat ?? "mp3",
+      req.body?.summaryStyle
     );
     sendSuccess(res, "Reel processing restarted.", { reel }, 202);
   } catch (err) {

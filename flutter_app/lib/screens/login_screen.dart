@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../config/api_config.dart';
 import '../providers/auth_provider.dart';
+import 'onboarding_guide_sheet.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -91,13 +92,19 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Share Instagram Reels or MP4/MP3 clips — transcribe for free, summarize, and organize in editable categories.',
+                      'Turn Instagram Reels & MP4/MP3 clips into brief, complete summaries in your chosen format — transcribed free & organized into folders.',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                             color: Colors.grey.shade400,
                           ),
                     ),
-                    const SizedBox(height: 28),
+                    const SizedBox(height: 14),
+                    OutlinedButton.icon(
+                      onPressed: () => OnboardingGuideSheet.show(context),
+                      icon: const Icon(Icons.help_outline_rounded, size: 18),
+                      label: const Text('New here? See How Reel-Saver Works'),
+                    ),
+                    const SizedBox(height: 20),
                     SegmentedButton<bool>(
                       segments: const [
                         ButtonSegment(value: false, label: Text('Sign In')),

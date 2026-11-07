@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Reel-Saver — AI Reel Transcript, Summary &amp; Organizer</title>
+  <title>Reel-Saver — Brief AI Reel Summaries, Voice Transcript &amp; Organizer</title>
   <link rel="manifest" href="/manifest.json" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
@@ -11,19 +11,32 @@
   <!-- ─── AUTH VIEW ────────────────────────────────────────────────────── -->
   <div id="authView" class="auth-wrapper">
     <div class="auth-card">
-      <div class="brand-header">
-        <div class="brand-logo">RS</div>
-        <div>
-          <div class="brand-title">Reel-Saver</div>
+      <div class="brand-header" style="justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="brand-logo">RS</div>
+          <div>
+            <div class="brand-title">Reel-Saver</div>
+          </div>
         </div>
+        <button id="authHowItWorksBtn" class="btn btn-secondary btn-sm" type="button">
+          ❓ How It Works
+        </button>
       </div>
       <p class="auth-subtitle">
-        Share an Instagram Reel link or upload MP4/MP3 — auto-convert to audio, transcribe for free, summarize, and organize in editable categories.
+        Turn any Instagram Reel or MP4/MP3 into a <strong>brief, complete summary</strong> in your favorite format (Bullets, Steps, Checklist, or Paragraph) — transcribed free &amp; organized into folders.
       </p>
 
-      <button id="quickDemoBtn" class="demo-hero-btn btn-block" type="button" style="margin-bottom:16px;">
+      <button id="quickDemoBtn" class="demo-hero-btn btn-block" type="button" style="margin-bottom:10px;">
         🚀 Launch Interactive Live Demo (1-Click)
       </button>
+
+      <div class="mini-steps-strip">
+        <span>① Share Link / MP4</span>
+        <span>→</span>
+        <span>② MP3 + Whisper</span>
+        <span>→</span>
+        <span>③ Brief Summary</span>
+      </div>
 
       <div class="divider">OR SIGN IN WITH YOUR ACCOUNT</div>
 
@@ -67,6 +80,10 @@
         + Share Link or MP4 / MP3
       </button>
 
+      <button id="sidebarGuideBtn" class="btn btn-secondary btn-sm btn-block" type="button">
+        📖 New User Guide · How It Works
+      </button>
+
       <div>
         <div class="sidebar-section-title">
           <span>Categories</span>
@@ -89,7 +106,7 @@
         <div>
           <h1 id="currentViewTitle" style="font-size:23px;font-weight:700;">All Saved Reels</h1>
           <p id="currentViewSubtitle" style="font-size:13px;color:var(--text-muted);">
-            Click any reel to listen to extracted MP3, rename its category, or edit summary &amp; transcript.
+            Click any reel to switch summary format (• Bullets / 1. Steps / ☑ Checklist / ¶ Paragraph), play MP3, or edit details.
           </p>
         </div>
         <div class="search-row">
@@ -104,8 +121,55 @@
             <option value="SUMMARIZING">Summarizing</option>
             <option value="FAILED">Failed</option>
           </select>
+          <button id="topbarGuideBtn" class="btn btn-secondary btn-sm" type="button" title="Open step-by-step guide" style="white-space:nowrap;">
+            ❓ Guide
+          </button>
         </div>
       </div>
+
+      <!-- New-User Quick-Start Workflow Banner (Dismissible, Reopenable via Guide button) -->
+      <section id="quickGuideBanner" class="quick-guide-banner hidden">
+        <div class="quick-guide-top">
+          <div>
+            <span class="quick-guide-tag">👋 NEW TO REEL-SAVER?</span>
+            <strong style="font-size:14.5px;margin-left:8px;">How to save, transcribe &amp; summarize any Reel in 4 quick steps</strong>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button id="bannerOpenTourBtn" class="btn btn-primary btn-sm" type="button">Open Interactive Tour</button>
+            <button id="dismissGuideBannerBtn" class="icon-btn" type="button" title="Dismiss banner">✕</button>
+          </div>
+        </div>
+        <div class="quick-guide-steps">
+          <div class="qg-step">
+            <div class="qg-num">1</div>
+            <div>
+              <div class="qg-title">Share Link or Upload</div>
+              <div class="qg-desc">Paste an Instagram Reel URL, drop an MP4/MP3, or click a Live Demo Reel below.</div>
+            </div>
+          </div>
+          <div class="qg-step">
+            <div class="qg-num">2</div>
+            <div>
+              <div class="qg-title">Confirm MP3 or MP4</div>
+              <div class="qg-desc">Choose <strong>MP3 Audio</strong> (recommended, 30× smaller), <strong>MP4 + MP3</strong>, or Caption Only.</div>
+            </div>
+          </div>
+          <div class="qg-step">
+            <div class="qg-num">3</div>
+            <div>
+              <div class="qg-title">Pick Summary Format</div>
+              <div class="qg-desc">Get a brief, complete summary as <strong>• Bullets</strong>, <strong>1. Steps</strong>, <strong>☑ Checklist</strong>, or <strong>¶ Paragraph</strong>.</div>
+            </div>
+          </div>
+          <div class="qg-step">
+            <div class="qg-num">4</div>
+            <div>
+              <div class="qg-title">Organize &amp; Edit</div>
+              <div class="qg-desc">AI auto-sorts into folders. Rename categories, check off items, or edit any word anytime.</div>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <!-- Interactive Live Demo Studio Bar -->
       <section id="demoStudioBar" class="demo-studio-bar">
@@ -113,7 +177,7 @@
           <div>
             <strong style="font-size:14px;">🎬 Live Demo Studio — Try a Reel End-to-End</strong>
             <span style="font-size:12.5px;color:var(--text-muted);margin-left:6px;">
-              Click any sample Reel below: it will <strong>ask you first</strong> (MP3 vs MP4+MP3), run real FFmpeg conversion, transcribe the voice to text, summarize &amp; auto-categorize!
+              Click any sample Reel below: pick <strong>MP3 or MP4</strong> + your <strong>Summary Format</strong>, then watch FFmpeg + Whisper + brief AI summary in action!
             </span>
           </div>
         </div>
@@ -159,6 +223,17 @@
           </div>
         </div>
 
+        <div class="form-group">
+          <label>Summary Format (Brief &amp; Complete — switchable anytime)</label>
+          <input id="addSummaryStyleInput" type="hidden" value="bullets" />
+          <div id="addSummaryStyleBar" class="style-pill-group">
+            <button type="button" class="style-pill active" data-style="bullets">• Bullet Points</button>
+            <button type="button" class="style-pill" data-style="numbered">1. Numbered Steps</button>
+            <button type="button" class="style-pill" data-style="checklist">☑ Action Checklist</button>
+            <button type="button" class="style-pill" data-style="paragraph">¶ Brief Paragraph</button>
+          </div>
+        </div>
+
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
           <div class="form-group">
             <label for="reelAuthor">Creator Handle (optional)</label>
@@ -193,14 +268,14 @@
 
   <!-- ─── CONFIRM AUTO MP3/MP4 CONVERSION & VOICE TRANSCRIPTION MODAL ──── -->
   <div id="confirmConvertModal" class="modal-backdrop hidden" style="z-index:140;">
-    <div class="modal-panel" style="max-width:540px;">
+    <div class="modal-panel" style="max-width:560px;">
       <div class="modal-header">
         <div class="modal-title">🎙 Auto-Convert Reel &amp; Transcribe Voice?</div>
         <button id="closeConfirmConvertBtn" class="icon-btn" type="button">✕</button>
       </div>
 
       <p style="font-size:14px;color:var(--text-muted);margin-bottom:6px;">
-        Would you like Reel-Saver to automatically download this Reel, convert its audio, and transcribe the spoken voice into text?
+        Choose how you want to save media and which <strong>brief summary format</strong> you prefer:
       </p>
       <div id="confirmConvertUrlPreview" style="font-size:12.5px;color:#a5b4fc;word-break:break-all;margin-bottom:8px;"></div>
 
@@ -213,7 +288,7 @@
               <span class="format-rec-pill">Recommended · Best &amp; Easiest</span>
             </div>
             <div style="font-size:12.5px;color:var(--text-muted);margin-top:3px;">
-              Extracts crisp 16kHz speech MP3 (~0.5 MB/min — 30× smaller than MP4), runs Local Whisper voice-to-text, then summarizes &amp; categorizes.
+              Extracts crisp 16kHz speech MP3 (~0.5 MB/min — 30× smaller than MP4), runs Local Whisper voice-to-text, then creates a brief complete summary.
             </div>
           </div>
         </label>
@@ -229,6 +304,17 @@
             </div>
           </div>
         </label>
+      </div>
+
+      <div class="form-group" style="margin-bottom:16px;">
+        <label style="margin-bottom:7px;">Summary Format</label>
+        <input id="confirmSummaryStyleInput" type="hidden" value="bullets" />
+        <div id="confirmSummaryStyleBar" class="style-pill-group">
+          <button type="button" class="style-pill active" data-style="bullets">• Bullets</button>
+          <button type="button" class="style-pill" data-style="numbered">1. Steps</button>
+          <button type="button" class="style-pill" data-style="checklist">☑ Checklist</button>
+          <button type="button" class="style-pill" data-style="paragraph">¶ Paragraph</button>
+        </div>
       </div>
 
       <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px;padding-top:12px;border-top:1px solid var(--border);">
@@ -247,7 +333,7 @@
 
   <!-- ─── REEL DETAIL & FULL ADJUSTMENT MODAL ──────────────────────────── -->
   <div id="detailModal" class="modal-backdrop hidden">
-    <div class="modal-panel">
+    <div class="modal-panel" style="max-width:720px;">
       <div class="modal-header">
         <div>
           <span id="detailStatusBadge" class="badge badge-done">DONE</span>
@@ -264,6 +350,34 @@
       <div id="detailAudioBox" class="audio-box hidden">
         <div style="font-size:12.5px;font-weight:600;color:#cbd5e1;" id="detailAudioLabel">Extracted MP3 Audio</div>
         <audio id="detailAudioPlayer" controls preload="metadata"></audio>
+      </div>
+
+      <!-- Interactive Brief Summary Card with Instant Format Switcher -->
+      <div class="summary-showcase-card">
+        <div class="summary-showcase-header">
+          <div>
+            <div style="font-size:13px;font-weight:700;color:#e2e8f0;">✨ Brief &amp; Complete Summary</div>
+            <div style="font-size:11.5px;color:var(--text-muted);">Switch view format anytime or rewrite with AI</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button id="copyFormattedSummaryBtn" class="btn btn-secondary btn-sm" type="button" style="padding:4px 9px;font-size:12px;">
+              📋 Copy
+            </button>
+            <button id="resummarizeBtn" class="btn btn-primary btn-sm" type="button" style="padding:4px 10px;font-size:12px;">
+              ↻ AI Rewrite in Format
+            </button>
+          </div>
+        </div>
+
+        <input id="detailSummaryStyleInput" type="hidden" value="bullets" />
+        <div id="detailSummaryStyleBar" class="style-pill-group" style="margin:10px 0 12px;">
+          <button type="button" class="style-pill active" data-style="bullets">• Bullet Points</button>
+          <button type="button" class="style-pill" data-style="numbered">1. Numbered Steps</button>
+          <button type="button" class="style-pill" data-style="checklist">☑ Checklist</button>
+          <button type="button" class="style-pill" data-style="paragraph">¶ Brief Paragraph</button>
+        </div>
+
+        <div id="formattedSummaryRender" class="formatted-summary-render"></div>
       </div>
 
       <form id="editReelForm">
@@ -285,15 +399,20 @@
           </div>
         </div>
 
-        <div class="form-group">
-          <label for="editSummary">AI Summary (Editable)</label>
-          <textarea id="editSummary" rows="3"></textarea>
-        </div>
+        <details class="raw-edit-accordion">
+          <summary>✎ Edit Summary &amp; Points Text Manually</summary>
+          <div style="padding-top:12px;">
+            <div class="form-group">
+              <label for="editSummary">Brief Overview Sentence (Editable)</label>
+              <textarea id="editSummary" rows="2"></textarea>
+            </div>
 
-        <div class="form-group">
-          <label for="editKeyPoints">Key Points (One bullet per line — Editable)</label>
-          <textarea id="editKeyPoints" rows="4"></textarea>
-        </div>
+            <div class="form-group" style="margin-bottom:4px;">
+              <label for="editKeyPoints">Structured Points (One item per line — auto-formatted above)</label>
+              <textarea id="editKeyPoints" rows="4"></textarea>
+            </div>
+          </div>
+        </details>
 
         <div class="form-group">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">
@@ -314,7 +433,6 @@
           <div style="display:flex;flex-wrap:wrap;gap:8px;">
             <button id="deleteReelBtn" class="btn btn-danger btn-sm" type="button">Delete</button>
             <button id="retryExtractionBtn" class="btn btn-primary btn-sm" type="button">🎙 Auto-Convert &amp; Transcribe Voice</button>
-            <button id="resummarizeBtn" class="btn btn-secondary btn-sm" type="button">↻ Re-Summarize Transcript</button>
             <label class="btn btn-secondary btn-sm" style="cursor:pointer;">
               📎 Attach MP4/MP3
               <input id="attachMediaInput" type="file" accept="video/*,audio/*,.mp4,.mp3,.m4a,.wav" class="hidden" />
@@ -326,6 +444,34 @@
           </div>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- ─── INTERACTIVE NEW-USER ONBOARDING GUIDE MODAL ──────────────────── -->
+  <div id="onboardingModal" class="modal-backdrop hidden" style="z-index:160;">
+    <div class="modal-panel" style="max-width:580px;">
+      <div class="modal-header" style="margin-bottom:12px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div class="brand-logo" style="width:34px;height:34px;font-size:14px;">RS</div>
+          <div>
+            <div class="modal-title" style="font-size:17px;">Welcome to Reel-Saver!</div>
+            <div style="font-size:12px;color:var(--text-muted);">Quick 4-step guide · Takes 20 seconds</div>
+          </div>
+        </div>
+        <button id="closeOnboardingBtn" class="icon-btn" type="button">✕</button>
+      </div>
+
+      <div id="onboardingDots" class="onboarding-dots"></div>
+
+      <div id="onboardingStepBody" class="onboarding-step-body"></div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:18px;padding-top:14px;border-top:1px solid var(--border);">
+        <button id="onboardingPrevBtn" class="btn btn-secondary btn-sm" type="button">← Back</button>
+        <div style="display:flex;gap:8px;">
+          <button id="onboardingSkipBtn" class="btn btn-secondary btn-sm" type="button">Skip Guide</button>
+          <button id="onboardingNextBtn" class="btn btn-primary btn-sm" type="button">Next Step →</button>
+        </div>
+      </div>
     </div>
   </div>
 

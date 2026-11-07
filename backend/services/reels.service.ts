@@ -18,6 +18,7 @@ import type {
   MediaFormatPreference,
   Reel,
   ReelWithCategory,
+  SummaryStyle,
   UpdateReelBody,
 } from "../types/reel.types";
 
@@ -80,6 +81,7 @@ export async function saveReel(
   const askBeforeConvert =
     body.askBeforeConvert === true || body.askBeforeConvert === "true";
   const mediaFormat: MediaFormatPreference = body.mediaFormat ?? "mp3";
+  const summaryStyle: SummaryStyle = body.summaryStyle ?? "bullets";
 
   const shouldWaitConfirmation =
     askBeforeConvert && !uploadedFile && !clientTranscript;
@@ -96,6 +98,7 @@ export async function saveReel(
     transcript: clientTranscript,
     notes: body.notes?.trim() || null,
     transcriptionSource: clientTranscript ? "client" : null,
+    summaryStyle,
     categoryId,
     initialStatus: shouldWaitConfirmation ? "AWAITING_CONFIRMATION" : "PENDING",
   });
@@ -130,6 +133,7 @@ export async function saveReel(
     uploadedFilePath: uploadedFile?.path ?? null,
     uploadedMimeType: uploadedFile?.mimetype ?? null,
     mediaFormat,
+    summaryStyle,
   });
 
   return attachCategory(reel);
@@ -180,6 +184,7 @@ export async function processReel(
     uploadedFilePath?: string | null;
     uploadedMimeType?: string | null;
     mediaFormat?: MediaFormatPreference;
+    summaryStyle?: SummaryStyle;
     forceReprocess?: boolean;
   }
 ): Promise<void> {
@@ -296,6 +301,9 @@ export async function processReel(
     // ─── Stage 3: AI Summary, Key Points & Category Assignment ──────────────
     await reelRepo.updateReelStatus(reelId, "SUMMARIZING", null);
 
+    const summaryStyle: SummaryStyle =
+      options?.summaryStyle ?? reel.summaryStyle ?? "bullets";
+
     const existingUserCategories = await categoryRepo.listCategoriesByUser(
       reel.userId
     );
@@ -305,6 +313,7 @@ export async function processReel(
       authorHandle,
       sourceUrl: reel.sourceUrl,
       userCategories: existingUserCategories.map((c) => c.name),
+      summaryStyle,
     });
 
     if (!spokenTranscript) {
@@ -337,6 +346,7 @@ export async function processReel(
       title: reel.title ?? aiResult.title,
       summary: aiResult.summary,
       keyPoints: aiResult.keyPoints,
+      summaryStyle,
       categoryId: finalCategoryId,
       processedAt: new Date().toISOString(),
     });
@@ -435,6 +445,9 @@ export async function updateReelForUser(
       .map((p) => p.trim())
       .filter((p) => p.length > 0);
   }
+  if (body.summaryStyle !== undefined) {
+    updates.summaryStyle = body.summaryStyle;
+  }
 
   if (body.categoryName !== undefined) {
     const catName = body.categoryName?.trim() ?? "";
@@ -461,6 +474,8 @@ export async function updateReelForUser(
   let updated = await reelRepo.updateReelFields(reelId, updates);
 
   if (body.resummarize) {
+    const effectiveStyle: SummaryStyle =
+      body.summaryStyle ?? updated.summaryStyle ?? "bullets";
     const userCategories = await categoryRepo.listCategoriesByUser(userId);
     const aiResult = await analyzeReelContent({
       spokenTranscript: updated.transcript,
@@ -468,6 +483,7 @@ export async function updateReelForUser(
       authorHandle: updated.authorHandle,
       sourceUrl: updated.sourceUrl,
       userCategories: userCategories.map((c) => c.name),
+      summaryStyle: effectiveStyle,
     });
 
     let catId = updated.categoryId;
@@ -483,6 +499,7 @@ export async function updateReelForUser(
       title: updated.title ?? aiResult.title,
       summary: aiResult.summary,
       keyPoints: aiResult.keyPoints,
+      summaryStyle: effectiveStyle,
       categoryId: catId,
       status: "DONE",
       errorMessage: null,
@@ -495,13 +512,16 @@ export async function updateReelForUser(
 
 export async function resummarizeReelForUser(
   userId: string,
-  reelId: string
+  reelId: string,
+  summaryStyle?: SummaryStyle
 ): Promise<ReelWithCategory> {
   const reel = await reelRepo.findReelById(reelId, userId);
   if (!reel) {
     throw Object.assign(new Error("Reel not found."), { statusCode: 404 });
   }
 
+  const effectiveStyle: SummaryStyle =
+    summaryStyle ?? reel.summaryStyle ?? "bullets";
   const userCategories = await categoryRepo.listCategoriesByUser(userId);
   const aiResult = await analyzeReelContent({
     spokenTranscript: reel.transcript,
@@ -509,6 +529,7 @@ export async function resummarizeReelForUser(
     authorHandle: reel.authorHandle,
     sourceUrl: reel.sourceUrl,
     userCategories: userCategories.map((c) => c.name),
+    summaryStyle: effectiveStyle,
   });
 
   const cat = await categoryRepo.findOrCreateCategory(userId, aiResult.category);
@@ -517,6 +538,7 @@ export async function resummarizeReelForUser(
     title: aiResult.title,
     summary: aiResult.summary,
     keyPoints: aiResult.keyPoints,
+    summaryStyle: effectiveStyle,
     categoryId: reel.categoryId ?? cat.id,
     status: "DONE",
     errorMessage: null,
@@ -529,12 +551,16 @@ export async function resummarizeReelForUser(
 export async function confirmAndConvertReelForUser(
   userId: string,
   reelId: string,
-  mediaFormat: MediaFormatPreference = "mp3"
+  mediaFormat: MediaFormatPreference = "mp3",
+  summaryStyle?: SummaryStyle
 ): Promise<ReelWithCategory> {
   const reel = await reelRepo.findReelById(reelId, userId);
   if (!reel) {
     throw Object.assign(new Error("Reel not found."), { statusCode: 404 });
   }
+
+  const effectiveStyle: SummaryStyle =
+    summaryStyle ?? reel.summaryStyle ?? "bullets";
 
   const isPlaceholderTitle =
     !reel.title || /^Saved (?:Instagram )?Reel/i.test(reel.title);
@@ -549,8 +575,15 @@ export async function confirmAndConvertReelForUser(
       : {}),
   });
 
-  await reelRepo.updateReelStatus(reelId, "PENDING", null);
-  await enqueueReelProcessing(reelId, { mediaFormat });
+  await reelRepo.updateReelFields(reelId, {
+    summaryStyle: effectiveStyle,
+    status: "PENDING",
+    errorMessage: null,
+  });
+  await enqueueReelProcessing(reelId, {
+    mediaFormat,
+    summaryStyle: effectiveStyle,
+  });
 
   const updated = await reelRepo.findReelById(reelId, userId);
   return attachCategory(updated ?? reel);
@@ -559,9 +592,10 @@ export async function confirmAndConvertReelForUser(
 export async function retryReelForUser(
   userId: string,
   reelId: string,
-  mediaFormat: MediaFormatPreference = "mp3"
+  mediaFormat: MediaFormatPreference = "mp3",
+  summaryStyle?: SummaryStyle
 ): Promise<ReelWithCategory> {
-  return confirmAndConvertReelForUser(userId, reelId, mediaFormat);
+  return confirmAndConvertReelForUser(userId, reelId, mediaFormat, summaryStyle);
 }
 
 export async function deleteReelForUser(
@@ -583,6 +617,7 @@ registerInProcessReelWorker(async (payload) => {
     uploadedFilePath: payload.uploadedFilePath,
     uploadedMimeType: payload.uploadedMimeType,
     mediaFormat: payload.mediaFormat,
+    summaryStyle: payload.summaryStyle,
     forceReprocess: true,
   });
 });
