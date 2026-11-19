@@ -105,6 +105,8 @@
     localStorage.removeItem(STORAGE_KEYS.user);
   }
 
+  let refreshInFlight = null;
+
   async function apiFetch(path, options = {}, retried = false) {
     const { accessToken, refreshToken } = getTokens();
     const headers = { ...(options.headers || {}) };
@@ -125,22 +127,35 @@
       res.status === 401 &&
       refreshToken &&
       !retried &&
-      !path.includes("/api/auth/")
+      (!path.startsWith("/api/auth/") || path === "/api/auth/me")
     ) {
-      const refreshRes = await fetch("/api/auth/refresh", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken }),
-      });
+      if (!refreshInFlight) {
+        refreshInFlight = fetch("/api/auth/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refreshToken }),
+        }).then(async (response) => ({ ok: response.ok, status: response.status, data: await response.json().catch(() => ({})) }))
+          .finally(() => { refreshInFlight = null; });
+      }
+      const refreshRes = await refreshInFlight;
       if (refreshRes.ok) {
-        const refreshData = await refreshRes.json();
+        const refreshData = refreshRes.data;
         saveSession(null, refreshData.data?.tokens);
         return apiFetch(path, options, true);
       } else {
-        clearSession();
-        renderViewState();
-        throw new Error("Session expired. Please sign in again.");
+        if (refreshRes.status === 401) {
+          clearSession();
+          renderViewState();
+          throw new Error("Session expired. Please sign in again.");
+        }
+        throw new Error(refreshRes.data.message || "Unable to refresh your session. Please try again.");
       }
+    }
+
+    if (res.status === 401 && (!path.startsWith("/api/auth/") || path === "/api/auth/me") && (!refreshToken || retried)) {
+      clearSession();
+      renderViewState();
+      throw new Error("Session expired. Please sign in again.");
     }
 
     const json = await res.json().catch(() => ({}));
@@ -430,6 +445,8 @@
     $("nameFieldWrap").classList.toggle("hidden", mode === "login");
     $("authSubmitBtn").textContent =
       mode === "login" ? "Sign In" : "Create Account";
+    $("authName").required = mode === "register";
+    $("authPassword").autocomplete = mode === "register" ? "new-password" : "current-password";
   }
 
   $("tabLogin").addEventListener("click", () => setAuthTab("login"));
@@ -448,7 +465,7 @@
         authMode === "login"
           ? { email, password }
           : {
-              name: $("authName").value.trim() || "Reel Saver User",
+              name: $("authName").value.trim(),
               email,
               password,
             };
@@ -1655,9 +1672,8 @@
   // Boot
   renderViewState();
   if (getTokens().accessToken) {
-    enterDashboard().catch(() => {
-      clearSession();
-      renderViewState();
+    enterDashboard().catch((err) => {
+      showToast(err.message || "Could not load your library. Please try again.");
     });
   }
 })();

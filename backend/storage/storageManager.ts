@@ -9,7 +9,9 @@ let lastCheckedAt = 0;
 let lastFallbackReason: string | null = null;
 let inflightProbe: Promise<boolean> | null = null;
 
-const RECHECK_UNHEALTHY_MS = 60_000;
+// Once selected, keep the same store for the lifetime of this process.
+// Automatically switching stores would make accounts and reels disappear.
+
 
 export function isSupabaseConnectivityOrSetupError(message: string): boolean {
   return /fetch failed|abort|timed? ?out|ENOTFOUND|ECONNREFUSED|ECONNRESET|EAI_AGAIN|UND_ERR|network|Invalid API key|JWT|Project is paused|502|503|504|Could not find the table|relation .* does not exist/i.test(
@@ -50,7 +52,7 @@ export async function probeSupabaseHealth(): Promise<boolean> {
   if (
     supabaseState === "fallback-local" &&
     ENV.STORAGE_MODE === "auto" &&
-    Date.now() - lastCheckedAt < RECHECK_UNHEALTHY_MS
+    lastCheckedAt > 0
   ) {
     return false;
   }
@@ -113,15 +115,19 @@ export function getStorageStatusSummary(): {
 
 /**
  * Executes `supabaseFn` when Supabase is configured & reachable.
- * In `STORAGE_MODE=auto` (default), if Supabase is paused, unreachable
- * (`TypeError: fetch failed`), or missing tables, seamlessly falls back to `localFn`
- * on the SAME request without failing!
+ * Auto mode selects a store on the initial health probe and keeps it for the
+ * process lifetime. If the selected Supabase store fails later, fail closed
+ * rather than creating accounts or other records in a different database.
  */
 export async function withStorageFallback<T>(
   supabaseFn: () => Promise<T>,
   localFn: () => T | Promise<T>
 ): Promise<T> {
-  if (ENV.STORAGE_MODE === "local" || !hasSupabaseEnvCredentials()) {
+  if (ENV.STORAGE_MODE === "local") return await localFn();
+  if (!hasSupabaseEnvCredentials()) {
+    if (ENV.STORAGE_MODE === "supabase") {
+      throw Object.assign(new Error("Supabase is not configured. Check SUPABASE_URL and the service role key."), { statusCode: 503 });
+    }
     return await localFn();
   }
 
@@ -139,8 +145,9 @@ export async function withStorageFallback<T>(
       ENV.STORAGE_MODE === "auto" &&
       isSupabaseConnectivityOrSetupError(msg)
     ) {
-      recordFallback(msg);
-      return await localFn();
+      // A request may already have written data to Supabase. Never redirect a
+      // failed operation to a separate database after selecting Supabase.
+      throw Object.assign(new Error("Storage is temporarily unavailable. Please try again; no switch to a different account database was made."), { statusCode: 503 });
     }
 
     if (isSupabaseConnectivityOrSetupError(msg)) {

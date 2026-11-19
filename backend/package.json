@@ -12,7 +12,8 @@
     "start:worker": "node dist/worker.js",
     "typecheck": "tsc --noEmit",
     "test:ai": "npx tsx scripts/test-ai.ts",
-    "test:e2e": "npx tsx scripts/test-cycle.ts"
+    "test:e2e": "npx tsx scripts/test-cycle.ts",
+    "test:auth": "tsx scripts/test-auth.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

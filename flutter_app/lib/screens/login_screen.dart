@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../config/api_config.dart';
@@ -54,7 +55,9 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (err) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(err.toString())),
+          SnackBar(content: Text(err is SocketException
+              ? 'Cannot reach the backend. Check its URL and make sure the server is running. On a real phone, 10.0.2.2 will not work; use your computer LAN address or an HTTPS deployment.'
+              : err.toString())),
         );
       }
     } finally {
@@ -169,6 +172,8 @@ class _LoginScreenState extends State<LoginScreen> {
                         decoration: const InputDecoration(
                           labelText: 'Backend Base URL',
                           hintText: 'https://your-backend.example.com',
+                          helperText: 'Real phone: use your server’s LAN or HTTPS URL; 10.0.2.2 is only for Android emulator.',
+                          helperMaxLines: 3,
                           border: OutlineInputBorder(),
                         ),
                       ),

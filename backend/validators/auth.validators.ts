@@ -16,9 +16,6 @@ export const registerValidators = [
     .notEmpty().withMessage("Password is required.")
     .isLength({ min: 8 }).withMessage("Password must be at least 8 characters."),
 
-  body("role")
-    .optional()
-    .isIn(["user", "admin", "moderator"]).withMessage("Role must be user, admin, or moderator."),
 ];
 
 export const loginValidators = [

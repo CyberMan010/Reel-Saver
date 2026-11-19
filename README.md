@@ -94,3 +94,9 @@ Ready-to-deploy configs are included for **Hugging Face Spaces (16 GB RAM Free D
 | `POST` | `/api/categories` | Create a custom category (English, Arabic, etc.) |
 | `PATCH` | `/api/categories/:id` | **Rename a category** across all its reels (merges automatically if target name exists) |
 | `DELETE` | `/api/categories/:id` | Delete a category while keeping its reels safely uncategorized |
+
+### Sign-in troubleshooting
+
+The web app uses the backend serving the page. In Flutter, open **Configure Backend API URL**: `http://10.0.2.2:4000` works only on an Android emulator. On a physical phone use your computer's reachable LAN address or an HTTPS deployment; ensure the backend is running and the phone can reach it. Registration requires a name and a password with at least 8 characters, uppercase and lowercase letters, a number and a symbol.
+
+Accounts belong to the configured storage backend. For a stable shared installation use `STORAGE_MODE=supabase` with a working Supabase project and schema; use `STORAGE_MODE=local` for a single machine with persistent local storage. Auto mode chooses local storage if Supabase is unavailable at startup and keeps that choice until restart. Local accounts are **not synced** to Supabase, so changing backends (including restarting after Supabase recovers) can make accounts appear missing; retain the local data and use the original backend to access them. Once Supabase is selected, outages return an error rather than silently writing to a separate database. Free hosting with ephemeral disk can lose local accounts on restart. Password-reset email delivery is not yet configured, so the reset endpoint is disabled rather than exposing reset tokens.

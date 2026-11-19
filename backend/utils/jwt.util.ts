@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import { randomUUID } from "crypto";
 import { ENV } from "../config/env";
 import type { TokenPayload, AuthTokens } from "../types/auth.types";
 
@@ -20,7 +21,7 @@ export function generateRefreshToken(payload: Omit<TokenPayload, "type">): strin
   return jwt.sign(
     { ...payload, type: "refresh" } as TokenPayload,
     ENV.JWT_REFRESH_SECRET,
-    { expiresIn: ENV.JWT_REFRESH_EXPIRES_IN as jwt.SignOptions["expiresIn"] }
+    { expiresIn: ENV.JWT_REFRESH_EXPIRES_IN as jwt.SignOptions["expiresIn"], jwtid: randomUUID() }
   );
 }
 

@@ -23,7 +23,15 @@ class ApiConfig {
   }
 
   static Future<void> setBaseUrl(String url) async {
-    _currentBaseUrl = _normalize(url);
+    final normalized = _normalize(url);
+    final uri = Uri.tryParse(normalized);
+    if (uri == null || !uri.hasAuthority ||
+        (uri.scheme != 'http' && uri.scheme != 'https') ||
+        uri.userInfo.isNotEmpty || uri.hasQuery || uri.hasFragment ||
+        (uri.path.isNotEmpty && uri.path != '/')) {
+      throw const FormatException('Enter a valid backend URL, e.g. https://your-server.example.com');
+    }
+    _currentBaseUrl = normalized;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_prefKey, _currentBaseUrl);
   }
