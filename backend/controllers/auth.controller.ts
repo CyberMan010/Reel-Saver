@@ -124,14 +124,9 @@ export async function forgotPassword(
   next: NextFunction
 ): Promise<void> {
   try {
-    const { token, expiresAt } = await authService.forgotPassword(req.body);
-
-    // In production: send token via email. Here we return it for demo purposes.
-    sendSuccess(
-      res,
-      "If an account with that email exists, a reset link has been sent.",
-      { reset_token: token, expires_at: expiresAt }
-    );
+    // No email delivery is configured. Returning a reset token lets anyone
+    // take over an account by requesting a token for its email address.
+    sendError(res, "Password reset email is not configured. Contact the server administrator.", 503);
   } catch (err) {
     next(err);
   }

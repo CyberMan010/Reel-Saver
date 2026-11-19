@@ -19,7 +19,7 @@ import type {
 export async function register(
   body: RegisterBody
 ): Promise<{ user: PublicUser; tokens: AuthTokens }> {
-  const { name, email, password, role } = body;
+  const { name, email, password } = body;
 
   // 1. Validate password strength
   const strength = validatePasswordStrength(password);
@@ -39,7 +39,7 @@ export async function register(
   const password_hash = await hashPassword(password);
 
   // 4. Create user in Supabase
-  const user = await userRepo.createUser({ name, email, password_hash, role });
+  const user = await userRepo.createUser({ name, email, password_hash });
 
   // 5. Generate token pair
   const tokenPayload = { userId: user.id, email: user.email, role: user.role };

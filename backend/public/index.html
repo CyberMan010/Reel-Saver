@@ -48,15 +48,15 @@
       <form id="authForm">
         <div id="nameFieldWrap" class="form-group hidden">
           <label for="authName">Full Name</label>
-          <input id="authName" type="text" placeholder="Zaid Al-Mansoor" />
+          <input id="authName" type="text" minlength="2" maxlength="60" autocomplete="name" placeholder="Zaid Al-Mansoor" />
         </div>
         <div class="form-group">
           <label for="authEmail">Email</label>
-          <input id="authEmail" type="email" placeholder="you@example.com" required />
+          <input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com" required />
         </div>
         <div class="form-group">
           <label for="authPassword">Password</label>
-          <input id="authPassword" type="password" placeholder="Min 8 chars, A-z, 0-9, symbol" required />
+          <input id="authPassword" type="password" autocomplete="current-password" placeholder="Min 8 chars, A-z, 0-9, symbol" required />
         </div>
         <button id="authSubmitBtn" class="btn btn-secondary btn-block" type="submit">
           Sign In

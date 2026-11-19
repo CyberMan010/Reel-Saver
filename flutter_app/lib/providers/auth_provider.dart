@@ -26,8 +26,11 @@ class AuthProvider extends ChangeNotifier {
           _user = UserModel.fromJson(data['user'] as Map<String, dynamic>);
         }
       }
+    } on ApiException catch (error) {
+      if (error.statusCode == 401) await apiClient.clearTokens();
+      _user = null;
     } catch (_) {
-      await apiClient.clearTokens();
+      // Keep the session when the backend is temporarily unreachable.
       _user = null;
     } finally {
       _loading = false;

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -96,7 +97,8 @@ class ApiClient {
         throw ApiException('Unsupported HTTP method: $method');
     }
 
-    if (res.statusCode == 401 && !retried && !apiPath.startsWith('/auth/')) {
+    if (res.statusCode == 401 && !retried &&
+        (!apiPath.startsWith('/auth/') || apiPath == '/auth/me')) {
       final refreshed = await _tryRefresh();
       if (refreshed) {
         return request(method, apiPath, body: body, query: query, retried: true);
@@ -145,7 +147,15 @@ class ApiClient {
     return _decodeResponse(res);
   }
 
-  Future<bool> _tryRefresh() async {
+  Future<bool>? _refreshInFlight;
+
+  Future<bool> _tryRefresh() {
+    return _refreshInFlight ??= _refreshTokens().whenComplete(() {
+      _refreshInFlight = null;
+    });
+  }
+
+  Future<bool> _refreshTokens() async {
     final refreshToken = await getRefreshToken();
     if (refreshToken == null || refreshToken.isEmpty) return false;
 
@@ -154,7 +164,7 @@ class ApiClient {
         _uri('/auth/refresh'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'refreshToken': refreshToken}),
-      );
+      ).timeout(const Duration(seconds: 20));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
         final tokens = (data['data'] as Map<String, dynamic>?)?['tokens']
@@ -167,10 +177,14 @@ class ApiClient {
           return true;
         }
       }
-    } catch (_) {
-      // Ignore refresh error
+      if (res.statusCode == 401) return false;
+      throw ApiException('Unable to refresh your session. Please try again.',
+          statusCode: res.statusCode);
+    } on SocketException {
+      throw const ApiException('Cannot reach the backend. Check the server URL and your connection.', statusCode: 503);
+    } on TimeoutException {
+      throw const ApiException('The backend did not respond. Please try again.', statusCode: 503);
     }
-    return false;
   }
 
   Map<String, dynamic> _decodeResponse(http.Response res) {

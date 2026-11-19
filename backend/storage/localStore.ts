@@ -10,12 +10,6 @@ export interface LocalDbSchema {
   categories: Category[];
 }
 
-const DEFAULT_DB: LocalDbSchema = {
-  users: [],
-  reels: [],
-  categories: [],
-};
-
 function getDbFilePath(): string {
   fs.mkdirSync(ENV.LOCAL_DATA_DIR, { recursive: true });
   return path.join(ENV.LOCAL_DATA_DIR, "local-db.json");
@@ -48,9 +42,9 @@ export function readLocalDb(): LocalDbSchema {
       categories: Array.isArray(parsed.categories) ? parsed.categories : [],
     };
     return memoryCache;
-  } catch {
-    memoryCache = { ...DEFAULT_DB, users: [], reels: [], categories: [] };
-    return memoryCache;
+  } catch (error) {
+    // Never replace a damaged or unreadable database with an empty one.
+    throw Object.assign(new Error(`Cannot read local database at ${filePath}. Restore it from a backup before continuing.`), { statusCode: 503, cause: error });
   }
 }
 

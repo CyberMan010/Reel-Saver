@@ -102,7 +102,10 @@ export async function createUser(payload: {
         .select("*")
         .single();
 
-      if (error) throw new Error(error.message);
+      if (error) {
+        if (error.code === "23505") throw Object.assign(new Error("An account with this email already exists."), { statusCode: 409 });
+        throw new Error(error.message);
+      }
       return data as User;
     },
     () => {
@@ -121,6 +124,9 @@ export async function createUser(payload: {
         updated_at: now,
       };
       return mutateLocalDb((db) => {
+        if (db.users.some((user) => user.email === normalizedEmail)) {
+          throw Object.assign(new Error("An account with this email already exists."), { statusCode: 409 });
+        }
         db.users.push(newUser);
         return newUser;
       });
